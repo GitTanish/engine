@@ -1,0 +1,104 @@
+<?xml version="1.0" ?>
+
+<robot name="heavy_drone">
+
+  <!-- Properties updated for 8kg heavy tactical drone -->
+  <!-- arm: 0.4m (Thrust points spaced 0.4m from center) -->
+  <!-- kf: 7.84e-7 (Calculated for 5000 RPM hover at 8kg) -->
+  <!-- km: 3.92e-8 (0.05 * kf) -->
+  <!-- thrust2weight: 2.25 -->
+  <!-- max_speed_kmh: 36 (10 m/s) -->
+  <!-- prop_radius: 0.2m (Approx 8 inches, fitting within arm spacing) -->
+  <!-- drag_coeff: Scaled up for larger area -->
+  <properties arm="0.4" kf="7.84e-7" km="3.92e-8" thrust2weight="2.25" max_speed_kmh="36" gnd_eff_coeff="11.36859" prop_radius="0.2" drag_coeff_xy="9.1785e-5" drag_coeff_z="10.311e-5" dw_coeff_1="2267.18" dw_coeff_2=".16" dw_coeff_3="-.11" />
+
+  <link name="base_link"> 
+
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="15.0"/> <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.9"/>
+    </inertial>
+
+    <visual>
+      <origin rpy="0 0 55" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="./cf2.dae" scale="10 10 10"/>
+      </geometry> 
+      <material name="blue">
+        <color rgba="0 0 1 1"/>
+      </material> 
+    </visual>
+
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.5" length="0.1"/>
+      </geometry>
+    </collision>  
+
+  </link>
+
+  <!-- Propeller links - positions updated for arm=0.4 -->
+  <!-- x = y = 0.4 / sqrt(2) = 0.28284 -->
+
+  <link name="prop0_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.28284 -0.28284 0"/>
+      <mass value="0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="prop0_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop0_link"/>
+  </joint>
+
+  <link name="prop1_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.28284 -0.28284 0"/>
+      <mass value="0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="prop1_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop1_link"/>
+  </joint>
+
+  <link name="prop2_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.28284 0.28284 0"/>
+      <mass value="0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="prop2_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop2_link"/>
+  </joint>
+
+  <link name="prop3_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.28284 0.28284 0"/>
+      <mass value="0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="prop3_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop3_link"/>
+  </joint>
+
+  <link name="center_of_mass_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="center_of_mass_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="center_of_mass_link"/>
+  </joint>
+
+</robot>
