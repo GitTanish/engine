@@ -284,9 +284,19 @@ def compute_action(my_state, neighbors, enemies, asset_pos, dt, time_now):
 
 ---
 
-## 👥 Contributors
+## 👥 Contributor
 
-**Engine Development Team**
+Tanish Saroj
+
+## 👥 Contribution
+
+This repository contains my implementation work for the Smart India Hackathon (SIH) drone swarm defense project, including:
+
+- Rule-based swarm coordination
+- Wolf Pack targeting strategy
+- Heuristic scheduling/intercept logic
+- Heavy drone simulation tuning
+- PyBullet integration and control systems
 
 ---
 
