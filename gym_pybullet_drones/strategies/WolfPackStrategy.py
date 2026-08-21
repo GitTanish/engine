@@ -1,4 +1,6 @@
-import numpy as np
+﻿import numpy as np
+from scipy.optimize import linear_sum_assignment
+from gym_pybullet_drones.utils.tlog import get_logger
 
 # Cost added to Fighters (mode=1) so Bombers are always prioritized.
 # Origin: tuned by examples/genetic_optimizer.py (GA) from a hardcoded 5000.0.
@@ -7,136 +9,84 @@ FIGHTER_PENALTY_DEFAULT = 790.2
 
 class WolfPackStrategy:
     """
-    Advanced Decentralized Strategy.
-    Fixes:
-    1. TTI-based Scoring (Prioritizes imminent threats).
-    2. Deterministic Tie-Breaking (Solves Comms-Denied Suicide).
-    3. Proper Priority (Bombers > Fighters).
+    Optimal decentralized-by-replication target assignment.
+
+    Every agent observes the SAME world snapshot, so each agent independently
+    solves the identical rectangular Linear Sum Assignment Problem (Hungarian,
+    via scipy) and reads its own row from the shared solution. Result:
+    - mathematically optimal 1:1 pairing (no duplicate engagements)
+    - surplus defenders fall through to patrol
+    - zero communication required (deterministic replication)
+    - comms-denied modulo fallback preserved for the no-neighbors case
     """
-    def __init__(self, intercept_limit=3, fighter_penalty=FIGHTER_PENALTY_DEFAULT):
-        self.intercept_limit = intercept_limit
+    def __init__(self, intercept_limit=3, fighter_penalty=FIGHTER_PENALTY_DEFAULT,
+                 w_dist=0.05):
+        self.intercept_limit = intercept_limit          # kept for API compat
         self.fighter_penalty = fighter_penalty
+        self.w_dist = w_dist                            # spatial tie-break weight
+        self.log = get_logger("wolfpack")
+
+    def _threat_cost(self, e, asset_pos):
+        """Priority cost of an enemy (lower = more urgent). Bombers > Fighters."""
+        e_pos = np.asarray(e['pos'], dtype=float)
+        dist_asset = np.linalg.norm(e_pos - np.asarray(asset_pos, dtype=float))
+        tti = dist_asset / 10.0                         # assume 10 m/s enemy speed
+        if e.get('mode', 0) == 1:                       # Fighter penalty
+            tti += self.fighter_penalty
+        return tti
 
     def select_target(self, my_id, my_pos, neighbors, enemies, asset_pos):
         """
-        Selects target based on Time-To-Impact (TTI) and Implicit Coordination.
+        Returns the enemy dict this defender should engage, or None → patrol.
         """
         if not enemies:
             return None
 
-        if neighbors is None:
-            neighbors = []
+        # --- Comms-denied fallback: deterministic modulo allocation -------
+        if not neighbors:
+            threats = sorted(enemies, key=lambda e: self._threat_cost(e, asset_pos))
+            bombers = [t for t in threats if t.get('mode', 0) == 0]
+            pool = bombers if bombers else threats
+            return pool[int(my_id) % len(pool)]
 
-        # --- 1. THREAT ASSESSMENT (TTI Based) ---
-        threats = []
-        for e in enemies:
-            e_pos = np.array(e['pos'], dtype=float)
-            e_mode = e.get('mode', 0)
-            
-            # Distance to Asset
-            dist_asset = np.linalg.norm(e_pos - np.array(asset_pos))
-            
-            # Time To Impact (TTI)
-            # Assuming max enemy speed 10m/s. TTI = Dist / Speed
-            tti = dist_asset / 10.0 
-            
-            # COST CALCULATION (Lower = Higher Priority)
-            # We want to minimize Cost.
-            
-            # Base Cost: Bomber = TTI. Fighter = TTI + Penalty.
-            # This ensures we always prioritize a Bomber 10s away over a Fighter 1s away.
-            cost = tti 
-            
-            if e_mode == 1: # Air Interceptor (Fighter)
-                cost += self.fighter_penalty
-            
-            # Secondary Sort: Distance to Me (Efficiency)
-            dist_to_me = np.linalg.norm(e_pos - my_pos)
-            
-            threats.append({
-                'cost': cost,
-                'dist_me': dist_to_me,
-                'data': e,
-                'id': e['id'] # Enemy ID is needed for hash
-            })
+        # --- Global optimal assignment, replicated locally -----------------
+        # Deterministic defender ordering (sorted ids => every agent builds
+        # the identical matrix and thus the identical solution).
+        defender_ids = sorted([int(n.get('id', -1)) for n in neighbors] + [int(my_id)])
+        my_row = defender_ids.index(int(my_id))
 
-        # Sort by Cost (Priority), then Efficiency
-        threats.sort(key=lambda x: (x['cost'], x['dist_me']))
-        
-        # --- 2. DECENTRALIZED ALLOCATION (The "Comms-Denied" Fix) ---
-        best_target = None
-        
-        # STATE A: We have neighbors (Comms UP) -> Use Distance Ranking
-        if len(neighbors) > 0:
-            # Track neighbors who have likely taken a higher-priority target
-            occupied_neighbor_ids = set()
+        # Column order: most urgent threats first so that when defenders are
+        # scarce, the assignment covers the highest-priority enemies.
+        order = sorted(range(len(enemies)),
+                       key=lambda j: self._threat_cost(enemies[j], asset_pos))
+        cost = np.zeros((len(defender_ids), len(order)), dtype=float)
+        for a, did in enumerate(defender_ids):
+            n_pos = next((np.asarray(n['pos'], dtype=float)
+                          for n in neighbors if int(n.get('id', -1)) == did),
+                         np.asarray(my_pos, dtype=float))
+            for b, j in enumerate(order):
+                e = enemies[j]
+                dist_me = np.linalg.norm(n_pos - np.asarray(e['pos'], dtype=float))
+                # Base threat priority + mild proximity preference as tie-break
+                cost[a, b] = self._threat_cost(e, asset_pos) + self.w_dist * dist_me
 
-            for threat in threats:
-                e_pos = np.array(threat['data']['pos'])
-                
-                # Identify "Better Allies" for THIS threat
-                better_allies_count = 0
-                potential_takers = []
+        rows, cols = linear_sum_assignment(cost)
 
-                for n in neighbors:
-                    n_id = n.get('id', -1)
-                    if n_id in occupied_neighbor_ids:
-                        continue # This neighbor is busy with a higher priority target
-                    
-                    n_pos = np.array(n['pos'])
-                    dist_n = np.linalg.norm(n_pos - e_pos)
-                    dist_me = threat['dist_me']
-                    
-                    # Check if 'n' is better than 'me'
-                    is_better = False
-                    if dist_n < dist_me - 1e-6:
-                        is_better = True
-                    elif abs(dist_n - dist_me) < 1e-6:
-                         # Tie Breaker
-                         if n_id != -1 and n_id < my_id:
-                             is_better = True
-                    
-                    if is_better:
-                        better_allies_count += 1
-                    
-                    # Store (dist, id) to determine who effectively takes this target
-                    potential_takers.append((dist_n, n_id))
+        assigned_col = None
+        for a, b in zip(rows, cols):
+            if a == my_row:
+                assigned_col = b
+                break
 
-                # If I am in the top 'limit' available drones, I take it
-                if better_allies_count < self.intercept_limit:
-                    best_target = threat['data']
-                    break
-                else:
-                    # I didn't take it.
-                    # Mark the TOP 'limit' neighbors as occupied for future checks.
-                    # We assume the best positioned neighbors took this target.
-                    potential_takers.sort() # Sort by distance
-                    for i in range(min(len(potential_takers), self.intercept_limit)):
-                        occupied_neighbor_ids.add(potential_takers[i][1])
-        
-        # STATE B: Neighbors empty (Comms DOWN) -> Use Deterministic Hashing
-        else:
-            # "I am alone. I must pick a target that no one else is picking."
-            # Algorithm: Modulo Allocation.
-            # We assume my peers are also running this algorithm.
-            # If there are 3 bombers, and I am ID 4: 4 % 3 = 1 -> I take Bomber #1.
-            
-            # Filter only Bombers (High Priority) to ensure we cover them first
-            bombers = [t for t in threats if t['cost'] < 2000]
-            
-            if bombers:
-                target_idx = my_id % len(bombers)
-                best_target = bombers[target_idx]['data']
-            else:
-                # No bombers? Pick closest fighter based on ID hash to spread fire
-                target_idx = my_id % len(threats)
-                best_target = threats[target_idx]['data']
+        if assigned_col is None:
+            # More defenders than enemies: I am surplus → patrol
+            return None
 
-        # Fallback
-        if best_target is None and threats:
-            best_target = threats[0]['data']
-            
-        return best_target
+        chosen = enemies[order[assigned_col]]
+        self.log.log("assignment", defender=int(my_id),
+                     enemy_uid=chosen.get('uid'),
+                     cost=round(float(cost[my_row, assigned_col]), 4))
+        return chosen
 
     def predict_battle_outcome(self, num_defenders, num_attackers):
         if num_attackers == 0: return "Victory (100%)"

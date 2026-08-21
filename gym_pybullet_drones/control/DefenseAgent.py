@@ -3,6 +3,46 @@ import pybullet as p
 from gym_pybullet_drones.utils.heavy_controller import HeavyDSLPIDControl
 from gym_pybullet_drones.strategies.WolfPackStrategy import WolfPackStrategy, FIGHTER_PENALTY_DEFAULT
 
+
+def proportional_nav(my_pos, my_vel, tgt_pos, tgt_vel, max_speed,
+                     n_const=4.0, dt=1.0 / 240.0):
+    """True Proportional Navigation → commanded velocity setpoint.
+
+    Classic missile guidance: a_cmd = N * Vc * LOS_rate, applied laterally.
+    We integrate the lateral accel command for one control step and rotate
+    it into a velocity setpoint that the downstream PID can track.
+
+    Returns a velocity vector with |v| = min(max_speed, current speed scale).
+    """
+    my_pos = np.asarray(my_pos, dtype=float)
+    my_vel = np.asarray(my_vel, dtype=float)
+    tgt_pos = np.asarray(tgt_pos, dtype=float)
+    tgt_vel = np.asarray(tgt_vel, dtype=float)
+
+    r_vec = tgt_pos - my_pos
+    r = np.linalg.norm(r_vec)
+    if r < 1e-6:
+        return np.zeros(3)
+    r_hat = r_vec / r
+
+    v_rel = tgt_vel - my_vel
+    closing = -np.dot(r_hat, v_rel)                       # Vc (>0 when closing)
+
+    # LOS rate vector: omega = (r x v_rel) / |r|^2
+    los_rate = np.cross(r_vec, v_rel) / max(r * r, 1e-6)
+    # Lateral accel command perpendicular to LOS
+    a_cmd = n_const * max(closing, 0.0) * np.cross(los_rate, r_hat)
+
+    speed = float(np.clip(np.linalg.norm(my_vel), 0.3 * max_speed, max_speed))
+    # Integrate accel into velocity setpoint, renormalize to cruise speed
+    v_set = my_vel + a_cmd * dt
+    norm = np.linalg.norm(v_set)
+    if norm < 1e-6:
+        v_set = r_hat                                     # launch from hover
+        norm = 1.0
+    return (v_set / norm) * min(max_speed, max(speed, 0.5 * max_speed))
+
+
 class DefenseAgent:
     """
     Defensive Drone Agent using Wolf Pack Strategy.
@@ -36,6 +76,9 @@ class DefenseAgent:
         
         self.MAX_SPEED = 10.0
         self.PATROL_ALTITUDE = 90.0  # UPDATED: Mid-range of 60-120m operational zone
+
+        # Proportional Navigation gain (3-5 typical; 4 balances smoothness vs aggression)
+        self.PN_GAIN = 4.0
 
     def _compute_ring_slot(self, agent_id, n_def, asset_pos, ring_radius=3.5, altitude=2.0, jitter_deg=6.0):
         # deterministic hash-based jitter
@@ -93,27 +136,15 @@ class DefenseAgent:
             target_vel = np.zeros(3)
             return self._send_pid(my_state, target_pos, target_vel, dt)
 
-        # --- 2. DYNAMIC LANCHESTER ALLOCATION (NEW) ---
-        # Calculate N/M Ratio: (Total Defenders / Total Enemies)
-        # We use (len(neighbors) + 1) to count ourselves + alive friends
-        num_enemies = len(enemies)
-        if num_enemies > 0:
-            num_allies = len(neighbors) + 1
-            # Use ceil to ensure no drone is left idle. 
-            # e.g., 10 defenders / 3 enemies = 3.33 -> Limit 4.
-            # This allows 3 groups of 3 and 1 group of 1, effectively engaging everyone.
-            dynamic_limit = int(np.ceil(num_allies / num_enemies))
-            
-            # Clamp limit to reasonable bounds (e.g. don't swarm 100 vs 1 unless needed)
-            # Actually, for Lanchester advantage, we WANT 100 vs 1 if possible. 
-            # So we only clamp minimum.
-            self.strategy.intercept_limit = max(1, dynamic_limit)
-        
-        # --- 3. STRATEGY: Select Target ---
+        # --- 2. STRATEGY: Optimal target selection (Hungarian, replicated) ---
+        # Exclude self: callers may pass the full swarm list, and a duplicate
+        # row would corrupt the assignment (phantom rows stealing targets).
+        neighbors_excl_self = [n for n in (neighbors or [])
+                               if int(n.get('id', -1)) != int(self.id)]
         target_enemy = self.strategy.select_target(
             my_id=self.id,
             my_pos=my_pos,
-            neighbors=neighbors,
+            neighbors=neighbors_excl_self,
             enemies=enemies,
             asset_pos=asset_pos
         )
@@ -189,21 +220,15 @@ class DefenseAgent:
 
             intercept_point = e_pos_virtual + (attack_dir * standoff_dist)
             
-            # [D] LEAD & FINAL TARGET
-            dist_to_intercept = np.linalg.norm(intercept_point - my_pos)
-            t_lead = min(dist_to_intercept / self.MAX_SPEED, 2.0)
-            
-            # Final calculation defines 'target_pos'
-            target_pos = intercept_point + (e_vel * t_lead)
-            target_pos[2] = target_z # Enforce altitude
-            
-            # Drive Velocity
-            drive_dir = target_pos - my_pos
-            drive_dist = np.linalg.norm(drive_dir)
-            if drive_dist > 1e-6:
-                target_vel = (drive_dir / drive_dist) * self.MAX_SPEED
-            else:
-                target_vel = np.zeros(3)
+            # [D] GUIDANCE: Proportional Navigation (replaces lead pursuit —
+            # PN compensates our own inertia; PID executes the vel setpoint)
+            target_pos = intercept_point + (e_vel * min(
+                np.linalg.norm(intercept_point - my_pos) / self.MAX_SPEED, 2.0))
+            target_pos[2] = target_z  # enforce operational altitude floor
+            target_vel = proportional_nav(my_pos, my_vel, target_pos, e_vel,
+                                          self.MAX_SPEED,
+                                          n_const=self.PN_GAIN,
+                                          dt=dt)
 
         else:
             # --- 5. PATROL: Orbit Logic ---

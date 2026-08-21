@@ -26,6 +26,10 @@ class BaseDefenseAviary(CtrlAviary):
         self.enemy_agents = []
         self.enemy_positions = []
         self.enemy_velocities = np.zeros((0, 3))
+        # Stable spawn-time identities (array indices shift when enemies die,
+        # so trackers must key on these UIDs, never on list position)
+        self.enemy_uids = []
+        self._next_enemy_uid = 0
 
         # Track dead friendlies to disable them
         self.dead_friendly_indices = set()
@@ -67,6 +71,7 @@ class BaseDefenseAviary(CtrlAviary):
         self.enemy_agents = []
         self.enemy_positions = []
         self.enemy_velocities = np.zeros((0, 3))
+        self.enemy_uids = []
         self.dead_friendly_indices = set()
 
         super().reset(seed=seed, options=options)
@@ -98,6 +103,8 @@ class BaseDefenseAviary(CtrlAviary):
             
             self.enemy_ids.append(eid)
             self.enemy_positions.append(np.array(pos))
+            self.enemy_uids.append(self._next_enemy_uid)
+            self._next_enemy_uid += 1
             self.enemy_agents.append(EnemyAgent(mode=mode))
             
         self.enemy_positions = np.array(self.enemy_positions) if self.enemy_positions else np.zeros((0, 3))
@@ -198,7 +205,8 @@ class BaseDefenseAviary(CtrlAviary):
             if np.any(in_range) and np.random.rand() < kill_prob:
                 shooter = alive_indices[int(np.argmin(np.where(in_range, dists, np.inf)))]
                 print(f"[SPLASH] Enemy {e_idx} neutralized by Defender {shooter}!")
-                self.combat_events.append({"type": "splash", "shooter": int(shooter), "victim": int(e_idx)})
+                self.combat_events.append({"type": "splash", "shooter": int(shooter), "victim": int(e_idx),
+                                           "victim_uid": int(self.enemy_uids[e_idx])})
                 indices_to_remove.append(e_idx)
 
         for idx in sorted(list(set(indices_to_remove)), reverse=True):
@@ -217,7 +225,8 @@ class BaseDefenseAviary(CtrlAviary):
             j = int(np.argmin(dists))
             if dists[j] < self.RAM_KILL_RADIUS:
                 print(f"[RAM] Defender {alive_indices[j]} neutralized Enemy {e_idx}!")
-                self.combat_events.append({"type": "ram", "shooter": int(alive_indices[j]), "victim": int(e_idx)})
+                self.combat_events.append({"type": "ram", "shooter": int(alive_indices[j]), "victim": int(e_idx),
+                                           "victim_uid": int(self.enemy_uids[e_idx])})
                 kills.append(e_idx)
 
         for idx in sorted(list(set(kills)), reverse=True):
@@ -268,6 +277,7 @@ class BaseDefenseAviary(CtrlAviary):
             except: pass
             del self.enemy_ids[index]
             del self.enemy_agents[index]
+            del self.enemy_uids[index]
             if len(self.enemy_positions) > 0:
                 self.enemy_positions = np.delete(self.enemy_positions, index, axis=0)
             if len(self.enemy_velocities) > 0:

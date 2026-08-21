@@ -196,6 +196,7 @@ def run():
                 for e_idx, e_pos in enumerate(env.enemy_positions):
                     current_enemies.append({
                         'id': e_idx,
+                        'uid': env.enemy_uids[e_idx],   # stable identity for trackers
                         'pos': e_pos,
                         'vel': env.enemy_velocities[e_idx],
                         'mode': env.enemy_agents[e_idx].mode
