@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 import pybullet as p
 from gym_pybullet_drones.utils.heavy_controller import HeavyDSLPIDControl
 from gym_pybullet_drones.strategies.WolfPackStrategy import WolfPackStrategy, FIGHTER_PENALTY_DEFAULT
@@ -7,7 +7,7 @@ from gym_pybullet_drones.control.tracking import TrackerPool
 
 def proportional_nav(my_pos, my_vel, tgt_pos, tgt_vel, max_speed,
                      n_const=4.0, dt=1.0 / 240.0):
-    """True Proportional Navigation → commanded velocity setpoint.
+    """True Proportional Navigation â†’ commanded velocity setpoint.
 
     Classic missile guidance: a_cmd = N * Vc * LOS_rate, applied laterally.
     We integrate the lateral accel command for one control step and rotate
@@ -49,7 +49,9 @@ class DefenseAgent:
     Defensive Drone Agent using Wolf Pack Strategy.
     Implements OODA Loop: Observe -> Decide (via Strategy) -> Act (via PID)
     """
-    def __init__(self, id, num_defenders, verbose=True, fighter_penalty=FIGHTER_PENALTY_DEFAULT):
+    def __init__(self, id, num_defenders, verbose=True,
+                 fighter_penalty=FIGHTER_PENALTY_DEFAULT,
+                 assignment_mode='hungarian', guidance='pn', use_prediction=True):
         self.id = id
         self.num_defenders = num_defenders
         self.verbose = verbose
@@ -63,7 +65,13 @@ class DefenseAgent:
         self.ctrl = HeavyDSLPIDControl()
         
         # Decision Strategy
-        self.strategy = WolfPackStrategy(intercept_limit=3, fighter_penalty=fighter_penalty)
+        self.strategy = WolfPackStrategy(intercept_limit=3,
+                                         fighter_penalty=fighter_penalty,
+                                         assignment_mode=assignment_mode)
+
+        # Guidance / estimation ablation switches (eval harness)
+        self.guidance = guidance              # 'pn' | 'pursuit'
+        self.use_prediction = use_prediction  # Kalman aimpoint on/off
         
         # Boids Parameters (ADJUSTED FOR STABILITY)
         self.SEPARATION_DIST = 4.0  # Increased from 2.0 to prevent collisions
@@ -140,6 +148,7 @@ class DefenseAgent:
     def _act_warmup(self, bb):
         self.state = "STANDBY"
         target_pos = np.array(bb['asset_pos']) + np.array([0, 0, 2.0])
+        self.last_vset = np.zeros(3)
         return self._send_pid(bb['my_state'], target_pos, np.zeros(3), bb['dt'])
 
     def _cond_safety(self, bb):
@@ -152,6 +161,7 @@ class DefenseAgent:
         self.state = "ESCAPE"
         pos = np.array(bb['my_state']['pos'], dtype=float)
         v = bb['safety_vel']
+        self.last_vset = v
         return self._send_pid(bb['my_state'], pos + v, v, bb['dt'])
 
     def _act_intercept(self, bb):
@@ -198,16 +208,26 @@ class DefenseAgent:
         # [D] GUIDANCE: Kalman-predicted aimpoint + Proportional Navigation
         dist_now = np.linalg.norm(e_pos - my_pos)
         t_go = float(np.clip(dist_now / self.MAX_SPEED, 0.1, 2.0))
-        e_pred = self.tracker.predict(target_enemy.get('uid'), t_go)
+        if self.use_prediction:
+            e_pred = self.tracker.predict(target_enemy.get('uid'), t_go)
+        else:
+            e_pred = None
         if e_pred is None:
             e_pred = e_pos + e_vel * t_go   # fallback: constant velocity
 
         target_pos = intercept_point + (e_pred - e_pos) * min(
             np.linalg.norm(intercept_point - my_pos) / self.MAX_SPEED, 2.0)
         target_pos[2] = np.clip(target_pos[2], 5.0, 120.0)
-        target_vel = proportional_nav(my_pos, my_vel, target_pos, e_vel,
-                                      self.MAX_SPEED,
-                                      n_const=self.PN_GAIN, dt=dt)
+
+        if self.guidance == 'pursuit':
+            drive = target_pos - my_pos
+            d = np.linalg.norm(drive)
+            target_vel = (drive / d) * self.MAX_SPEED if d > 1e-6 else np.zeros(3)
+        else:  # 'pn' (default)
+            target_vel = proportional_nav(my_pos, my_vel, target_pos, e_vel,
+                                          self.MAX_SPEED,
+                                          n_const=self.PN_GAIN, dt=dt)
+        self.last_vset = target_vel
         return self._send_pid(bb['my_state'], target_pos, target_vel, dt)
 
     def _act_patrol(self, bb):

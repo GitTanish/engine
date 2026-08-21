@@ -20,11 +20,13 @@ class WolfPackStrategy:
     - comms-denied modulo fallback preserved for the no-neighbors case
     """
     def __init__(self, intercept_limit=3, fighter_penalty=FIGHTER_PENALTY_DEFAULT,
-                 w_dist=0.05):
-        self.intercept_limit = intercept_limit          # kept for API compat
+                 w_dist=0.05, assignment_mode='hungarian'):
+        self.intercept_limit = intercept_limit          # used by 'greedy' mode
         self.fighter_penalty = fighter_penalty
         self.w_dist = w_dist                            # spatial tie-break weight
+        self.assignment_mode = assignment_mode          # 'hungarian' | 'greedy'
         self.log = get_logger("wolfpack")
+        self.last_uid = None                            # instrumentation: last selection
 
     def _threat_cost(self, e, asset_pos):
         """Priority cost of an enemy (lower = more urgent). Bombers > Fighters."""
@@ -34,6 +36,27 @@ class WolfPackStrategy:
         if e.get('mode', 0) == 1:                       # Fighter penalty
             tti += self.fighter_penalty
         return tti
+
+    def _select_greedy(self, my_id, my_pos, neighbors, enemies, asset_pos):
+        """Legacy reference allocator (ablation baseline): priority-sorted
+        threats with distance-rank admission control (allows swarming)."""
+        limit = max(1, int(np.ceil((len(neighbors) + 1) / len(enemies))))
+        occupied = set()
+        ranked = sorted(enemies, key=lambda e: (
+            self._threat_cost(e, asset_pos),
+            np.linalg.norm(np.asarray(e['pos'], float) - np.asarray(my_pos, float))))
+        for e in ranked:
+            e_pos = np.asarray(e['pos'], dtype=float)
+            dists = {int(n.get('id', -1)):
+                     np.linalg.norm(np.asarray(n['pos'], float) - e_pos)
+                     for n in neighbors}
+            better = sum(1 for d in dists.values()
+                         if d < np.linalg.norm(np.asarray(my_pos, float) - e_pos) - 1e-6)
+            if better < limit:
+                return e
+            top = sorted(dists.items(), key=lambda kv: kv[1])[:limit]
+            occupied.update(k for k, _ in top)
+        return None
 
     def select_target(self, my_id, my_pos, neighbors, enemies, asset_pos):
         """
@@ -47,7 +70,14 @@ class WolfPackStrategy:
             threats = sorted(enemies, key=lambda e: self._threat_cost(e, asset_pos))
             bombers = [t for t in threats if t.get('mode', 0) == 0]
             pool = bombers if bombers else threats
-            return pool[int(my_id) % len(pool)]
+            chosen = pool[int(my_id) % len(pool)]
+            self.last_uid = chosen.get('uid')
+            return chosen
+
+        if self.assignment_mode == 'greedy':
+            chosen = self._select_greedy(my_id, my_pos, neighbors, enemies, asset_pos)
+            self.last_uid = None if chosen is None else chosen.get('uid')
+            return chosen
 
         # --- Global optimal assignment, replicated locally -----------------
         # Deterministic defender ordering (sorted ids => every agent builds
@@ -80,11 +110,13 @@ class WolfPackStrategy:
 
         if assigned_col is None:
             # More defenders than enemies: I am surplus → patrol
+            self.last_uid = None
             return None
 
         chosen = enemies[order[assigned_col]]
+        self.last_uid = chosen.get('uid')
         self.log.log("assignment", defender=int(my_id),
-                     enemy_uid=chosen.get('uid'),
+                     enemy_uid=self.last_uid,
                      cost=round(float(cost[my_row, assigned_col]), 4))
         return chosen
 
