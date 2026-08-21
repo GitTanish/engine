@@ -1,14 +1,14 @@
 import numpy as np
 import pybullet as p
 from gym_pybullet_drones.utils.heavy_controller import HeavyDSLPIDControl
-from gym_pybullet_drones.strategies.WolfPackStrategy import WolfPackStrategy
+from gym_pybullet_drones.strategies.WolfPackStrategy import WolfPackStrategy, FIGHTER_PENALTY_DEFAULT
 
 class DefenseAgent:
     """
     Defensive Drone Agent using Wolf Pack Strategy.
     Implements OODA Loop: Observe -> Decide (via Strategy) -> Act (via PID)
     """
-    def __init__(self, id, num_defenders, verbose=True):
+    def __init__(self, id, num_defenders, verbose=True, fighter_penalty=FIGHTER_PENALTY_DEFAULT):
         self.id = id
         self.num_defenders = num_defenders
         self.verbose = verbose
@@ -22,8 +22,7 @@ class DefenseAgent:
         self.ctrl = HeavyDSLPIDControl()
         
         # Decision Strategy
-        # Decision Strategy
-        self.strategy = WolfPackStrategy(intercept_limit=3)
+        self.strategy = WolfPackStrategy(intercept_limit=3, fighter_penalty=fighter_penalty)
         
         # Boids Parameters (ADJUSTED FOR STABILITY)
         self.SEPARATION_DIST = 4.0  # Increased from 2.0 to prevent collisions

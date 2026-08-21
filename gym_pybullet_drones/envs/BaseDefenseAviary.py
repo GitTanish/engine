@@ -14,15 +14,27 @@ class BaseDefenseAviary(CtrlAviary):
         self.THREAT_RANGE = 100.0 
         self.FIRING_RANGE_MIN = 30.0
         self.FIRING_RANGE_MAX = 250.0
-        self.HIT_PROBABILITY_PER_STEP = 0.05 
-        
+
+        # Weapons are tuned as frequency-independent Poisson rates (kills/sec).
+        # Legacy constant was HIT_PROBABILITY_PER_STEP = 0.05 @ 240Hz CTRL_FREQ;
+        # we derive the equivalent rate so behavior is preserved if CTRL_FREQ changes.
+        self.HIT_RATE_PER_SEC = -np.log(1.0 - 0.05) / self.CTRL_TIMESTEP
+        self.RAM_KILL_RADIUS = 2.0
+
         # Swarm State
         self.enemy_ids = []
         self.enemy_agents = []
         self.enemy_positions = []
-        
-        # NEW: Track dead friendlies to disable them
+        self.enemy_velocities = np.zeros((0, 3))
+
+        # Track dead friendlies to disable them
         self.dead_friendly_indices = set()
+
+        # Managed visual bodies (removed/recreated on reset to avoid leaks)
+        self.asset_body_id = -1
+
+        # Kill events recorded during the last step (consumed by scripts/UI)
+        self.combat_events = []
 
     def _observationSpace(self):
         return spaces.Box(low=-np.inf, high=np.inf, shape=(self.NUM_DRONES, 42), dtype=np.float32)
@@ -54,6 +66,7 @@ class BaseDefenseAviary(CtrlAviary):
         self.enemy_ids = []
         self.enemy_agents = []
         self.enemy_positions = []
+        self.enemy_velocities = np.zeros((0, 3))
         self.dead_friendly_indices = set()
 
         super().reset(seed=seed, options=options)
@@ -87,15 +100,21 @@ class BaseDefenseAviary(CtrlAviary):
             self.enemy_positions.append(np.array(pos))
             self.enemy_agents.append(EnemyAgent(mode=mode))
             
-        self.enemy_positions = np.array(self.enemy_positions)
+        self.enemy_positions = np.array(self.enemy_positions) if self.enemy_positions else np.zeros((0, 3))
+        self.enemy_velocities = np.zeros((len(self.enemy_positions), 3))
         
-        # Base Visual
+        # Base Visual. NOTE: super().reset() calls p.resetSimulation(), which
+        # destroys every body — old body ids are invalid, so recreate from scratch.
+        self.asset_body_id = -1
         visual_shape_id = p.createVisualShape(shapeType=p.GEOM_BOX, halfExtents=[0.5, 0.5, 0.5], rgbaColor=[0, 1, 0, 1])
-        p.createMultiBody(baseVisualShapeIndex=visual_shape_id, basePosition=self.BASE_POS)
+        self.asset_body_id = p.createMultiBody(baseVisualShapeIndex=visual_shape_id, basePosition=self.BASE_POS)
 
         return self._computeObs(), {}
 
     def step(self, action):
+        # Kill events for this step (exposed via info["combat_events"])
+        self.combat_events = []
+
         # 1. Enforce Death (The Graveyard)
         # If a drone is dead, we override its physics to stay underground
         if len(self.dead_friendly_indices) > 0:
@@ -113,6 +132,7 @@ class BaseDefenseAviary(CtrlAviary):
         # 2. Move Enemies
         current_drone_pos = np.array([self._getDroneStateVector(i)[0:3] for i in range(self.NUM_DRONES)])
         new_positions = []
+        new_velocities = []
         for idx, agent in enumerate(self.enemy_agents):
             vel = agent.compute_action(
                 my_pos=self.enemy_positions[idx],
@@ -124,8 +144,10 @@ class BaseDefenseAviary(CtrlAviary):
             
             new_pos = self.enemy_positions[idx] + (vel * self.CTRL_TIMESTEP)
             new_positions.append(new_pos)
+            new_velocities.append(np.asarray(vel, dtype=float))
             p.resetBasePositionAndOrientation(self.enemy_ids[idx], new_pos, [0,0,0,1], physicsClientId=self.CLIENT)
-        self.enemy_positions = np.array(new_positions)
+        self.enemy_positions = np.array(new_positions) if new_positions else np.zeros((0, 3))
+        self.enemy_velocities = np.array(new_velocities) if new_velocities else np.zeros((0, 3))
 
         # 3. Physics Step
         obs, reward, term, trunc, info = super().step(action)
@@ -133,8 +155,11 @@ class BaseDefenseAviary(CtrlAviary):
         # 4. WEAPONS: Blue shooting Red
         self._process_blue_engagements(current_drone_pos)
         
-        # 5. WEAPONS: Red shooting Blue (NEW!)
+        # 5. WEAPONS: Red shooting Blue
         self._process_red_engagements(current_drone_pos)
+
+        # 5b. WEAPONS: Kinetic ram-kill (last-resort intercept)
+        self._process_ram_kills(current_drone_pos)
 
         # 6. Check Unattended
         violation, details = self._check_unattended_violation(current_drone_pos)
@@ -143,28 +168,59 @@ class BaseDefenseAviary(CtrlAviary):
             
         # Add Friendly Loss count to info for metrics
         info["friendly_losses"] = len(self.dead_friendly_indices)
-            
+
+        # Combat bookkeeping for scripts/UI
+        info["combat_events"] = self.combat_events
+        info["asset_hit"] = False
+        if len(self.enemy_positions) > 0:
+            dists_to_base = np.linalg.norm(self.enemy_positions - self.BASE_POS, axis=1)
+            if np.any(dists_to_base < 1.0):
+                info["asset_hit"] = True
+
         return obs, reward, term, trunc, info
+
+    def _hit_probability(self):
+        """Frequency-independent per-step kill probability (Poisson)."""
+        return 1.0 - np.exp(-self.HIT_RATE_PER_SEC * self.CTRL_TIMESTEP)
 
     def _process_blue_engagements(self, friendly_positions):
         """ Friendlies shooting Enemies """
         if len(self.enemy_positions) == 0: return
+        alive_indices = [i for i in range(self.NUM_DRONES) if i not in self.dead_friendly_indices]
+        if not alive_indices: return
+
+        alive_pos = friendly_positions[alive_indices]
+        kill_prob = self._hit_probability()
         indices_to_remove = []
         for e_idx, e_pos in enumerate(self.enemy_positions):
-            # Only alive friendlies can shoot
-            alive_indices = [i for i in range(self.NUM_DRONES) if i not in self.dead_friendly_indices]
-            if not alive_indices: break
-            
-            alive_pos = friendly_positions[alive_indices]
             dists = np.linalg.norm(alive_pos - e_pos, axis=1)
-            
             in_range = (dists >= self.FIRING_RANGE_MIN) & (dists <= self.FIRING_RANGE_MAX)
-            if np.any(in_range):
-                if np.random.rand() < self.HIT_PROBABILITY_PER_STEP:
-                    indices_to_remove.append(e_idx)
-                    print(f"[SPLASH] Enemy {e_idx} neutralized!")
+            if np.any(in_range) and np.random.rand() < kill_prob:
+                shooter = alive_indices[int(np.argmin(np.where(in_range, dists, np.inf)))]
+                print(f"[SPLASH] Enemy {e_idx} neutralized by Defender {shooter}!")
+                self.combat_events.append({"type": "splash", "shooter": int(shooter), "victim": int(e_idx)})
+                indices_to_remove.append(e_idx)
 
         for idx in sorted(list(set(indices_to_remove)), reverse=True):
+            self.neutralize_enemy(idx)
+
+    def _process_ram_kills(self, friendly_positions):
+        """ Kinetic intercept: defender destroys enemy on contact. """
+        if len(self.enemy_positions) == 0: return
+        alive_indices = [i for i in range(self.NUM_DRONES) if i not in self.dead_friendly_indices]
+        if not alive_indices: return
+
+        alive_pos = friendly_positions[alive_indices]
+        kills = []
+        for e_idx, e_pos in enumerate(self.enemy_positions):
+            dists = np.linalg.norm(alive_pos - e_pos, axis=1)
+            j = int(np.argmin(dists))
+            if dists[j] < self.RAM_KILL_RADIUS:
+                print(f"[RAM] Defender {alive_indices[j]} neutralized Enemy {e_idx}!")
+                self.combat_events.append({"type": "ram", "shooter": int(alive_indices[j]), "victim": int(e_idx)})
+                kills.append(e_idx)
+
+        for idx in sorted(list(set(kills)), reverse=True):
             self.neutralize_enemy(idx)
 
     def _process_red_engagements(self, friendly_positions):
@@ -183,7 +239,7 @@ class BaseDefenseAviary(CtrlAviary):
                     
                     # Same firing range for fairness
                     if self.FIRING_RANGE_MIN <= dist <= self.FIRING_RANGE_MAX:
-                        if np.random.rand() < self.HIT_PROBABILITY_PER_STEP:
+                        if np.random.rand() < self._hit_probability():
                             print(f"[ALERT] Friendly {f_idx} DOWN! Hit by Enemy {e_idx}")
                             self.dead_friendly_indices.add(f_idx)
 
@@ -214,3 +270,5 @@ class BaseDefenseAviary(CtrlAviary):
             del self.enemy_agents[index]
             if len(self.enemy_positions) > 0:
                 self.enemy_positions = np.delete(self.enemy_positions, index, axis=0)
+            if len(self.enemy_velocities) > 0:
+                self.enemy_velocities = np.delete(self.enemy_velocities, index, axis=0)

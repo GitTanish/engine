@@ -25,8 +25,18 @@ class MobileDefenseAviary(BaseDefenseAviary):
         self.base_body_id = -1
 
     def reset(self, seed=None, options=None, scenario_config=None):
-        # 1. Parent Reset (Clears physics)
+        # 0. Reset convoy to route start BEFORE parent reset so enemy
+        #    spawning and threat logic use the correct origin
+        self.BASE_POS = np.array([-200.0, 0.0, 0.0])
+
+        # 1. Parent Reset (clears enemies, recreates the static asset box)
         obs, info = super().reset(seed=seed, options=options, scenario_config=scenario_config)
+
+        # 1b. Remove the static box: the moving convoy truck replaces it
+        if self.asset_body_id != -1:
+            try: p.removeBody(self.asset_body_id, physicsClientId=self.CLIENT)
+            except: pass
+            self.asset_body_id = -1
         
         # 2. Override Enemies with MOBILE Agents
         self.enemy_agents = [] # Clear standard agents
@@ -38,9 +48,9 @@ class MobileDefenseAviary(BaseDefenseAviary):
             mode = 0 if np.random.rand() < config["ground_attacker_ratio"] else 1
             self.enemy_agents.append(MobileEnemyAgent(mode=mode))
 
-        # 3. Create Mobile Asset Body
-        # Reset Position to start of convoy route
-        self.BASE_POS = np.array([-200.0, 0.0, 0.0]) 
+        # 3. Create Mobile Asset Body. NOTE: super().reset() called
+        #    p.resetSimulation(), so the old truck body no longer exists.
+        self.base_body_id = -1
         
         # Visual: Green Truck
         visual_shape_id = p.createVisualShape(shapeType=p.GEOM_BOX, halfExtents=[1.5, 0.8, 0.8], rgbaColor=[0, 1, 0, 1])

@@ -189,14 +189,16 @@ def run():
 
             # 2. Parse Enemies from Environment
             # BaseDefenseAviary manages enemies internally now.
-            # We construct a list of dicts for the DefenseAgent.
+            # We construct a list of dicts for the DefenseAgent with REAL
+            # velocities (for lead-pursuit math) and modes (for targeting priority).
             current_enemies = []
             if len(env.enemy_positions) > 0:
                 for e_idx, e_pos in enumerate(env.enemy_positions):
                     current_enemies.append({
                         'id': e_idx,
                         'pos': e_pos,
-                        'vel': np.zeros(3) # Velocity not easily accessible, assuming 0 for now
+                        'vel': env.enemy_velocities[e_idx],
+                        'mode': env.enemy_agents[e_idx].mode
                     })
 
             # 3. Compute Actions (Defenders Only)
@@ -218,21 +220,9 @@ def run():
                 elif agent.state == "PATROL":
                      p.addUserDebugLine(my_pos, my_pos + [0,0,1], [0,0,1], 1, lifeTime=0.1, physicsClientId=env.CLIENT)
 
-            # --- RED TEAM ---
-            # The Environment (BaseDefenseAviary) now handles Enemy movement internally.
-            # We just pass zeros for their motor commands so the physics engine doesn't interfere.
-            for idx in range(NUM_ENEMIES):
-                # NOTE: In this script, 'action' is size (NUM_DEFENDERS, 4).
-                # We do NOT need to set actions for enemies because the environment
-                # step() only expects actions for the controlled drones (NUM_DEFENDERS).
-                # Wait, BaseDefenseAviary inherits from CtrlAviary.
-                # If num_drones=NUM_DEFENDERS, then step() expects (NUM_DEFENDERS, 4).
-                # The enemies are separate bodies managed by PyBullet directly in step().
-                # So we don't need to add them to 'action' at all.
-                pass
-
             # 4. Step the simulation
-            # env.step() now handles enemy movement internally
+            # env.step() handles enemy movement, all weapons (splash + ram),
+            # and enemy removal internally. Combat events arrive via info.
             obs, reward, terminated, truncated, info = env.step(action)
             
             # Sync the simulation
@@ -260,46 +250,16 @@ def run():
                 })
             LATEST_FRAME = {"t": i / env.CTRL_FREQ, "drones": drones}
             
-            # --- WIN/LOSS LOGIC ---
-            # Check Loss: Enemy hits base
-            # We check env.enemy_positions
-            if len(env.enemy_positions) > 0:
-                dists_to_base = np.linalg.norm(env.enemy_positions - ASSET_POS, axis=1)
-                if np.any(dists_to_base < 1.0):
-                    print(f"\n[FAILURE] An Enemy hit the Asset!")
-                    losses += 1
-                    episode_over = True
+            # --- WIN/LOSS LOGIC (resolved by the environment) ---
+            # Check Loss: Enemy reached the asset
+            if info.get("asset_hit", False):
+                print(f"\n[FAILURE] An Enemy hit the Asset!")
+                losses += 1
+                episode_over = True
 
             if episode_over: break
 
-            # Check Win: All enemies neutralized
-            # Neutralization condition: Defender gets very close (Ramming)
-            # We need to manually check this and modify env state to "kill" enemies
-            
-            enemies_to_remove = []
-            for e_idx, e_pos in enumerate(env.enemy_positions):
-                for f_idx, friendly in enumerate(friendly_states):
-                    dist = np.linalg.norm(friendly['pos'] - e_pos)
-                    if dist < 2.0: # Ram radius
-                        print(f"[COMBAT] Defender {f_idx} neutralized Enemy {e_idx}!")
-                        enemies_to_remove.append(e_idx)
-                        break # One defender can only kill one enemy per step (simplification)
-            
-            # Remove killed enemies (in reverse order to preserve indices)
-            if enemies_to_remove:
-                enemies_to_remove = sorted(list(set(enemies_to_remove)), reverse=True)
-                for e_idx in enemies_to_remove:
-                    # Remove from PyBullet
-                    try:
-                        p.removeBody(env.enemy_ids[e_idx], physicsClientId=env.CLIENT)
-                    except:
-                        pass
-                    # Remove from Env Lists
-                    del env.enemy_ids[e_idx]
-                    del env.enemy_agents[e_idx]
-                    # Numpy delete
-                    env.enemy_positions = np.delete(env.enemy_positions, e_idx, axis=0)
-            
+            # Check Win: All enemies neutralized (by splash or ram, inside env.step)
             if len(env.enemy_positions) == 0:
                 print("\n[VICTORY] All enemies neutralized!")
                 wins += 1

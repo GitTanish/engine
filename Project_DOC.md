@@ -142,113 +142,43 @@ This is the most complex agent, acting as the "brain" for the defensive drones. 
 ## 7. Full Project File Structure
 
 ```
-C:.
-│   .gitignore
-│   CITATION.cff
-│   LICENSE
-│   PROJECT_DOCUMENTATION.md
-│   pyproject.toml
-│   README.md
-│   test_defense_fix.md
-│
-├───.github
-│   │   dependabot.yml
-│   │
-│   └───workflows
-│           test.yml
-│
-├───gym_pybullet_drones
-│   │   README.md
-│   │   __init__.py
-│   │
-│   ├───assets
-│   │       architrave.urdf
-│   │       beta-presets-bak.txt
-│   │       beta-traj.csv
-│   │       box.urdf
-│   │       cf2.dae
-│   │       cf2p.urdf
-│   │       cf2x.urdf
-│   │       clone_bfs.sh
-│   │       eeprom.bin
-│   │       ffmpeg_png2mp4.sh
-│   │       heavy_drone.urdf
-│   │       helix.gif
-│   │       helix.png
-│   │       marl.gif
-│   │       racer.urdf
-│   │       rl.gif
-│   │       sphere2.urdf
-│   │
-│   ├───control
-│   │   │   BaseControl.py
-│   │   │   CTBRControl.py
-│   │   │   DefenseAgent.py
-│   │   │   DSLPIDControl.py
-│   │   │   EnemyAgent.py
-│   │   │   MRAC.py
-│   │   │   WolfPackStrategy.py
-│   │   │   __init__.py
-│   │   │
-│   │   └───strategies
-│   │       │   WolfPackStrategy.py
-│   │       │   __init__.py
-│   │       │
-│   │       └───__pycache__
-│   │               WolfPackStrategy.cpython-310.pyc
-│   │               WolfPackStrategy.cpython-312.pyc
-│   │               __init__.cpython-310.pyc
-│   │               __init__.cpython-312.pyc
-│   │
-│   ├───envs
-│   │   │   BaseAviary.py
-│   │   │   BaseDefenseAviary.py
-│   │   │   BaseRLAviary.py
-│   │   │   BetaAviary.py
-│   │   │   CFAviary.py
-│   │   │   CtrlAviary.py
-│   │   │   HoverAviary.py
-│   │   │   MultiHoverAviary.py
-│   │   │   VelocityAviary.py
-│   │   │   __init__.py
-│   │   │
-│   ├───examples
-│   │   │   beta.py
-│   │   │   cf.py
-│   │   │   debug.py
-│   │   │   debug_path.py
-│   │   │   debug_test_env.py
-│   │   │   downwash.py
-│   │   │   learn.py
-│   │   │   mrac.py
-│   │   │   output.log
-│   │   │   output.txt
-│   │   │   pid.py
-│   │   │   pid_velocity.py
-│   │   │   play.py
-│   │   │   test_defense_scenario.py
-│   │   │   test_heavy_drone_render.py
-│   │   │   test_heavy_hover.py
-│   │   │   __init__.py
-│   │   │
-│   │   └───results
-│   │       │   save-flight-11.29.2025_18.28.18.npy
-│   │       │   save-flight-11.29.2025_18.35.17.npy
-│   │       │
-│   │       ├───save-flight-pid-11.29.2025_18.28.18
-│   │       ├───save-flight-pid-11.29.2025_18.35.17
-│   │       ├───save-flight-vel-11.29.2025_18.30.00
-│   │       └───save-flight-vel-11.29.2025_18.31.16
-│   │
-│   └───utils
-│       │   drone_constants.py
-│       │   enums.py
-│       │   heavy_controller.py
-│       │   Logger.py
-│       │   utils.py
-│       │   __init__.py
-│
-└───tests
-        test_build.py
-        test_examples.py
+f15-Tomcat/
+├── .github/                       # CI (pytest on push) + dependabot
+├── gym_pybullet_drones/
+│   ├── assets/                    # URDFs incl. heavy_drone.urdf (15kg defender/enemy body)
+│   ├── control/
+│   │   ├── BaseControl.py         # Abstract controller interface
+│   │   ├── DSLPIDControl.py       # Workhorse PID controller
+│   │   ├── DefenseAgent.py        # Defender brain: OODA loop, WolfPack targeting, patrol orbit
+│   │   ├── EnemyAgent.py          # Attacker: mode 0 = bomber (→asset), mode 1 = fighter (→drones)
+│   │   ├── CTBRControl.py / MRAC.py
+│   │   └── strategies/            # (legacy shim; canonical strategies live at package root)
+│   ├── envs/
+│   │   ├── BaseAviary.py          # Physics layer (PyBullet, Z-up, gravity -Z)
+│   │   ├── BaseRLAviary.py        # Gymnasium RL interface layer
+│   │   ├── CtrlAviary.py          # Direct-control env (non-RL)
+│   │   ├── BaseDefenseAviary.py   # Defense scenario: enemy mgmt, splash/ram weapons, deaths
+│   │   └── HoverAviary.py / VelocityAviary.py / ...
+│   ├── examples/
+│   │   ├── test_defense_scenario.py   # MAIN ENTRY: GUI sim + WebSocket telemetry (:8765)
+│   │   ├── monte_carlo_validator.py   # 100 headless runs → success-rate stats
+│   │   ├── genetic_optimizer.py       # Evolves WolfPack fighter_penalty
+│   │   ├── batch_validator.py         # Scenario A/B batch validation
+│   │   ├── dashboard.py / scenario_disco.py / VIZ*.py
+│   │   └── pid.py / learn.py / ...    # Classic upstream demos
+│   ├── MobileAssetSolution/       # Moving-convoy variant of the defense scenario
+│   │   ├── MobileDefenseAviary.py # Convoy truck asset traveling across the map
+│   │   ├── MobileEnemyAgent.py    # Fog-of-war enemies (spot asset only in proximity)
+│   │   └── batch_validator_mobile.py
+│   ├── strategies/
+│   │   └── WolfPackStrategy.py    # TTI-cost target allocation + comms-denied fallback
+│   └── utils/
+│       ├── heavy_controller.py    # HeavyDSLPIDControl (15kg gains)
+│       ├── enums.py / drone_constants.py / Logger.py / utils.py
+├── tests/                         # Smoke tests (build + examples import)
+├── ui/
+│   └── mission_control_console.html  # Three.js mission control dashboard (WS client)
+├── serve_frontend.py              # FastAPI server for the UI (localhost:8000)
+├── pyproject.toml / uv.lock       # Dependencies (run everything via `uv run`)
+└── Project_DOC.md / PROJECT_DOCUMENTATION.md / README.md
 ```

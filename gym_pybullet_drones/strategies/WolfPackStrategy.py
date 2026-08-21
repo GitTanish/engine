@@ -1,5 +1,10 @@
 import numpy as np
 
+# Cost added to Fighters (mode=1) so Bombers are always prioritized.
+# Origin: tuned by examples/genetic_optimizer.py (GA) from a hardcoded 5000.0.
+# NOTE: single-run GA output — treat as scenario-tuned, re-validate before reuse.
+FIGHTER_PENALTY_DEFAULT = 790.2
+
 class WolfPackStrategy:
     """
     Advanced Decentralized Strategy.
@@ -8,8 +13,9 @@ class WolfPackStrategy:
     2. Deterministic Tie-Breaking (Solves Comms-Denied Suicide).
     3. Proper Priority (Bombers > Fighters).
     """
-    def __init__(self, intercept_limit=3):
+    def __init__(self, intercept_limit=3, fighter_penalty=FIGHTER_PENALTY_DEFAULT):
         self.intercept_limit = intercept_limit
+        self.fighter_penalty = fighter_penalty
 
     def select_target(self, my_id, my_pos, neighbors, enemies, asset_pos):
         """
@@ -42,7 +48,7 @@ class WolfPackStrategy:
             cost = tti 
             
             if e_mode == 1: # Air Interceptor (Fighter)
-                cost += 790.2 # Optimized via Genetic Algorithm (was 5000.0)
+                cost += self.fighter_penalty
             
             # Secondary Sort: Distance to Me (Efficiency)
             dist_to_me = np.linalg.norm(e_pos - my_pos)

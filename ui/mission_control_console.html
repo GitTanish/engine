@@ -1,0 +1,1762 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engine Swarm - Mission Control Workstation</title>
+  
+  <!-- Inter & JetBrains Mono Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Three.js and OrbitControls for advanced camera tracking -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            void: '#0b0b0b',
+            graphite: '#1f2228',
+            bone: '#71717a',
+            ash: '#a1a1aa',
+            starlight: '#fafaf9',
+            signal: '#2563eb',
+            warning: '#f59e0b'
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    /* Viewport-locked desktop grid container */
+    body, html {
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b0b0b;
+    }
+
+    ::-webkit-scrollbar {
+      width: 2px;
+      height: 2px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0b0b0b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1f2228;
+    }
+
+    .font-display {
+      font-family: 'Inter', sans-serif;
+      font-weight: 400;
+      letter-spacing: -0.03em;
+    }
+
+    .font-metadata {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .critical-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500 !important;
+    }
+
+    .console-input:focus {
+      outline: none;
+      border-color: #2563eb !important;
+    }
+  </style>
+</head>
+<body class="text-ash font-mono select-none h-full flex flex-col relative">
+
+  <!-- Header Bar -->
+  <header class="h-12 border-b border-graphite bg-void flex items-center justify-between px-6 shrink-0 z-30">
+    <div class="flex items-center gap-8">
+      <span class="font-metadata text-xs text-starlight">ENGINE // MISSION CONTROL</span>
+      <div class="h-4 w-[1px] bg-graphite hidden md:block"></div>
+      <span id="system-state-tag" class="font-metadata text-[10px] text-bone hidden md:inline">SYSTEM STATE: DECENTRALIZED</span>
+    </div>
+    
+    <!-- Real-time UTC astronomy timepiece -->
+    <div class="flex items-center gap-4">
+      <span id="utc-clock" class="font-metadata text-xs text-starlight">00:00:00 UTC</span>
+      <button id="btn-replay" class="border border-graphite hover:border-starlight text-starlight text-[10px] font-metadata py-1 px-3 transition-colors">
+        REPLAY MISSION
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Split Layout -->
+  <div class="flex-1 flex flex-col md:flex-row overflow-hidden shrink-0">
+    
+    <!-- Left Navigation Rail: Telemetry, Source & Import Instruments -->
+    <aside class="w-full md:w-[26%] border-b md:border-b-0 md:border-r border-graphite bg-void flex flex-col overflow-y-auto shrink-0 select-text">
+      
+      <!-- Telemetry Readings -->
+      <section class="p-6 border-b border-graphite">
+        <h2 class="font-metadata text-xs text-starlight mb-4">TRACKING METRICS</h2>
+        <div class="space-y-4">
+          <div class="flex justify-between items-baseline border-b border-graphite/40 pb-2">
+            <span class="font-metadata text-[11px] text-bone">Targets Detected</span>
+            <span id="stat-targets" class="critical-val text-lg text-starlight">14</span>
+          </div>
+          <div class="flex justify-between items-baseline border-b border-graphite/40 pb-2">
+            <span class="font-metadata text-[11px] text-bone">Active Defenders</span>
+            <span id="stat-defenders" class="critical-val text-lg text-starlight">5</span>
+          </div>
+          <div class="flex justify-between items-baseline border-b border-graphite/40 pb-2">
+            <span class="font-metadata text-[11px] text-bone">Coverage Radius</span>
+            <span class="critical-val text-lg text-starlight">98%</span>
+          </div>
+          <div class="flex justify-between items-baseline">
+            <span class="font-metadata text-[11px] text-bone">Last Scan Latency</span>
+            <span id="stat-latency" class="critical-val text-sm text-starlight">0.12 s</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Data Source Selector (Simulation, Replay, Live WebSocket) -->
+      <section class="p-6 border-b border-graphite">
+        <h2 class="font-metadata text-xs text-starlight mb-4">DATA SOURCE</h2>
+        <div class="grid grid-cols-3 gap-1.5 mb-4">
+          <button id="source-demo" onclick="setDataSource('demo')" class="border border-starlight text-starlight font-metadata py-1.5 text-center text-[10px] transition-colors">
+            DEMO
+          </button>
+          <button id="source-replay" onclick="setDataSource('replay')" class="border border-graphite text-bone font-metadata py-1.5 text-center text-[10px] hover:border-starlight hover:text-starlight transition-colors">
+            REPLAY
+          </button>
+          <button id="source-live" onclick="setDataSource('live')" class="border border-graphite text-bone font-metadata py-1.5 text-center text-[10px] hover:border-starlight hover:text-starlight transition-colors">
+            LIVE WS
+          </button>
+        </div>
+        
+        <!-- Live Connection Status Fields -->
+        <div id="ws-status-panel" class="hidden space-y-2 text-[10px] bg-[rgb(4,6,10)] border border-graphite p-3">
+          <div class="flex justify-between">
+            <span class="text-bone">UPLINK ADDRESS:</span>
+            <span id="ws-addr" class="text-starlight font-mono">localhost:8765</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-bone">CONNECTION:</span>
+            <span id="ws-state" class="text-warning">DISCONNECTED</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-bone">LATENCY:</span>
+            <span id="ws-latency-val" class="text-starlight critical-val">-- ms</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-bone">FRAMES INGESTED:</span>
+            <span id="ws-frames-val" class="text-starlight critical-val">0</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Minimalist File Import Drop Zone -->
+      <section class="p-6 border-b border-graphite">
+        <h2 class="font-metadata text-xs text-starlight mb-3">MISSION DATA</h2>
+        <div id="drop-zone" class="border border-dashed border-graphite p-4 text-center cursor-pointer hover:border-starlight transition-colors relative">
+          <span class="font-metadata text-[10px] text-bone block mb-1">UPLOAD REPLAY FILE</span>
+          <span class="text-[9px] text-bone/60 block font-sans">SUPPORTED FOR .JSON, .CSV, .NPY</span>
+          <input type="file" id="file-input" class="hidden" accept=".json,.csv,.npy">
+        </div>
+      </section>
+
+      <!-- Intelligence Envelope / Protocol Preset Selector -->
+      <section class="p-6 border-b border-graphite">
+        <h2 class="font-metadata text-xs text-starlight mb-3">INTELLIGENCE ENVELOPE</h2>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <button id="preset-wolf" onclick="activatePreset('wolf')" class="border border-starlight bg-void font-metadata py-2 text-center text-starlight transition-colors">
+            WOLF PACK
+          </button>
+          <button id="preset-swarm" onclick="activatePreset('swarm')" class="border border-graphite bg-void font-metadata py-2 text-center text-bone hover:border-starlight hover:text-starlight transition-colors">
+            ANT SWARM
+          </button>
+          <button id="preset-formation" onclick="activatePreset('formation')" class="border border-graphite bg-void font-metadata py-2 text-center text-bone hover:border-starlight hover:text-starlight transition-colors">
+            FORMATION
+          </button>
+          <button id="preset-market" onclick="activatePreset('market')" class="border border-graphite bg-void font-metadata py-2 text-center text-bone hover:border-starlight hover:text-starlight transition-colors">
+            MARKET BID
+          </button>
+        </div>
+      </section>
+
+      <!-- Mission Console Interface (A true flat terminal input) -->
+      <section class="p-6 flex-1 flex flex-col justify-end">
+        <h2 class="font-metadata text-xs text-starlight mb-2">OPERATIONAL COMMANDS</h2>
+        <div class="relative flex items-center bg-void border border-graphite">
+          <span class="pl-3 text-bone font-metadata">&gt;</span>
+          <input type="text" id="console-cmd" placeholder="prioritize northern cluster..." class="console-input w-full bg-void text-starlight text-xs font-mono py-2.5 pl-2 pr-4 border-0 placeholder:text-bone/60">
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- Center: Operational Space 3D Telemetry (Flexible center-screen layout) -->
+    <main class="flex-1 flex flex-col relative bg-void overflow-hidden">
+      
+      <!-- Operational Space Viewport Container -->
+      <div id="radar-viewport-container" class="flex-1 relative cursor-crosshair">
+        
+        <!-- Live Target Info Hover Overlay (Raycaster Telemetry HUD) -->
+        <div id="target-hover-card" class="absolute top-4 left-4 bg-void border border-graphite p-4 w-52 pointer-events-none z-20 hidden">
+          <div class="border-b border-graphite pb-1.5 mb-2 flex justify-between items-center">
+            <span id="hover-target-id" class="font-metadata text-[11px] text-starlight">TARGET 07</span>
+            <span id="hover-target-threat" class="font-metadata text-[9px] text-warning">HIGH</span>
+          </div>
+          <div class="space-y-1.5 text-[10px]">
+            <div class="flex justify-between">
+              <span class="text-bone">Velocity</span>
+              <span id="hover-target-vel" class="text-starlight">214 m/s</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-bone">Coordinates</span>
+              <span id="hover-target-coords" class="text-starlight">[-12.4, 25.1]</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-bone">Confidence</span>
+              <span id="hover-target-conf" class="text-starlight">96%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Camera vantage modes controller panel -->
+        <div class="absolute top-4 left-4 pointer-events-auto z-10 flex gap-1">
+          <span class="bg-void border border-graphite text-bone text-[9px] font-metadata flex items-center px-2">CAMERA:</span>
+          <button id="cam-free" onclick="setCameraMode('free')" class="bg-void border border-starlight text-starlight text-[9px] font-metadata py-1.5 px-3 transition-colors">
+            FREE
+          </button>
+          <button id="cam-top" onclick="setCameraMode('top')" class="bg-void border border-graphite text-bone text-[9px] font-metadata py-1.5 px-3 hover:border-starlight hover:text-starlight transition-colors">
+            TOP
+          </button>
+          <button id="cam-side" onclick="setCameraMode('side')" class="bg-void border border-graphite text-bone text-[9px] font-metadata py-1.5 px-3 hover:border-starlight hover:text-starlight transition-colors">
+            SIDE
+          </button>
+          <button id="cam-follow" onclick="setCameraMode('follow')" class="bg-void border border-graphite text-bone text-[9px] font-metadata py-1.5 px-3 hover:border-starlight hover:text-starlight transition-colors">
+            FOLLOW
+          </button>
+          <div class="w-1 h-full mx-1"></div>
+          <button onclick="zoomCamera(-1)" class="bg-void border border-graphite text-bone text-[12px] font-metadata py-1 px-2.5 hover:border-starlight hover:text-starlight transition-colors" title="Zoom In">
+            +
+          </button>
+          <button onclick="zoomCamera(1)" class="bg-void border border-graphite text-bone text-[12px] font-metadata py-1 px-2.5 hover:border-starlight hover:text-starlight transition-colors" title="Zoom Out">
+            -
+          </button>
+        </div>
+
+        <!-- Viewport Metadata overlays -->
+        <div class="absolute top-4 right-4 pointer-events-none text-right font-metadata text-[10px] text-bone z-10">
+          GRID: 150m RADAR COORDINATE SWEEP<br>
+          SCALE: 1:1 KINEMATIC SIMULATOR
+        </div>
+
+        <!-- Active Radar Settings HUD Overlay -->
+        <div class="absolute bottom-4 left-4 pointer-events-none bg-void border border-graphite p-3 text-[10px] text-bone space-y-1 z-10">
+          <div class="flex items-center gap-2"><span class="w-3 h-[1px] bg-starlight inline-block"></span> DEFENDER (HOLLOW CROSSHAIR)</div>
+          <div class="flex items-center gap-2"><span class="w-3 h-1 bg-starlight rounded-full inline-block"></span> ACTIVE TARGETS (WHITE DOT)</div>
+          <div class="flex items-center gap-2"><span id="hud-threat-perimeter" class="w-3 h-[1px] border border-dashed border-bone inline-block"></span> THREAT DETECT RADIUS (30m)</div>
+        </div>
+
+        <!-- 3D Three.js radar target canvas -->
+        <div id="radar-canvas-container" class="w-full h-full absolute inset-0">
+          <!-- Canvas injected here -->
+        </div>
+
+      </div>
+
+      <!-- Bottom Strip: Consolidated Event Stream -->
+      <footer class="h-44 border-t border-graphite bg-void flex flex-col shrink-0 select-text">
+        <div class="h-8 border-b border-graphite px-6 flex items-center bg-void justify-between">
+          <div class="flex items-center gap-4">
+            <span class="font-metadata text-[10px] text-starlight">EVENT STREAM</span>
+            <button onclick="downloadLogs()" class="text-[9px] text-bone hover:text-starlight font-metadata transition-colors border border-graphite hover:border-starlight px-2 py-0.5">
+              EXPORT LOGS
+            </button>
+          </div>
+          <span class="font-metadata text-[9px] text-bone" id="protocol-indicator">PROTOCOL: DECENTRALIZED WOLF PACK</span>
+        </div>
+        <div id="timeline-stream" class="flex-1 p-4 overflow-y-auto space-y-2 text-[11px] font-mono scroll-smooth">
+          <!-- Log stream lines appended directly by runtime events -->
+        </div>
+      </footer>
+
+    </main>
+
+    <!-- Right Collapsible Panel: Drone Telemetry Sparklines -->
+    <aside id="inspector-panel" class="hidden w-full md:w-[24%] border-t md:border-t-0 md:border-l border-graphite bg-void flex flex-col overflow-y-auto shrink-0 select-text transition-all duration-300">
+      
+      <!-- Inspector Header -->
+      <div class="p-6 border-b border-graphite flex justify-between items-center">
+        <div>
+          <span class="font-metadata text-[9px] text-bone block">INSPECTOR</span>
+          <h2 id="ins-title" class="font-metadata text-xs text-starlight">DEFENDER 01</h2>
+        </div>
+        <button onclick="collapseInspectorPanel()" class="text-bone hover:text-starlight font-mono text-sm leading-none">&times;</button>
+      </div>
+
+      <!-- Dynamic Telemetry readings and Live Sparklines -->
+      <section class="p-6 space-y-6">
+        <div>
+          <span class="font-metadata text-[10px] text-bone block mb-2">Altitude</span>
+          <div class="bg-[rgb(4,6,10)] border border-graphite p-2 h-16 relative">
+            <svg class="w-full h-full" id="svg-altitude">
+              <path d="" fill="none" stroke="#2563eb" stroke-width="1" />
+            </svg>
+          </div>
+        </div>
+
+        <div>
+          <span class="font-metadata text-[10px] text-bone block mb-2">Interception Speed</span>
+          <div class="bg-[rgb(4,6,10)] border border-graphite p-2 h-16 relative">
+            <svg class="w-full h-full" id="svg-speed">
+              <path d="" fill="none" stroke="#fafaf9" stroke-width="1" />
+            </svg>
+          </div>
+        </div>
+
+        <div>
+          <span class="font-metadata text-[10px] text-bone block mb-2">Controller RPM</span>
+          <div class="bg-[rgb(4,6,10)] border border-graphite p-2 h-16 relative">
+            <svg class="w-full h-full" id="svg-rpm">
+              <path d="" fill="none" stroke="#f59e0b" stroke-width="1" />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Entity Status readout -->
+        <div class="space-y-2 text-[11px]">
+          <div class="flex justify-between border-b border-graphite/40 pb-1.5">
+            <span class="text-bone">Coordinates</span>
+            <span id="ins-coords" class="text-starlight">0.0, 0.0</span>
+          </div>
+          <div class="flex justify-between border-b border-graphite/40 pb-1.5">
+            <span class="text-bone">Mission State</span>
+            <span id="ins-state" class="text-starlight">STANDBY</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-bone">Assigned Vector</span>
+            <span id="ins-vector" class="text-starlight">--</span>
+          </div>
+        </div>
+      </section>
+
+    </aside>
+
+  </div>
+
+  <!-- MISSION COMPLETED LAB REPORT OVERLAY (Appears on simulation state complete) -->
+  <div id="report-modal" class="fixed inset-0 bg-void/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-void border border-graphite max-w-sm w-full p-6 select-text">
+      <div class="border-b border-graphite pb-3 mb-4">
+        <span class="font-metadata text-xs text-starlight">MISSION COMPLETED</span>
+        <h3 id="report-id" class="font-display text-xl text-starlight mt-1">MISSION 0147</h3>
+      </div>
+      
+      <div class="space-y-3 text-xs border-b border-graphite pb-4 mb-4">
+        <div class="flex justify-between">
+          <span class="text-bone">Targets Detected</span>
+          <span id="report-detected" class="critical-val text-starlight">14</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-bone">Neutralized</span>
+          <span id="report-neutralized" class="critical-val text-starlight">13</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-bone">Escaped</span>
+          <span id="report-escaped" class="critical-val text-starlight">1</span>
+        </div>
+        <div class="flex justify-between pt-1">
+          <span class="text-bone">Decision Latency</span>
+          <span class="critical-val text-starlight">37 ms</span>
+        </div>
+      </div>
+
+      <div class="mb-6">
+        <span class="text-[10px] font-metadata text-bone block mb-1">Outcome Status:</span>
+        <p class="font-display text-starlight text-sm">Operational success. Defense perimeter stabilized.</p>
+      </div>
+
+      <div class="flex justify-end">
+        <button onclick="dismissReport()" class="border border-graphite hover:border-starlight text-starlight font-metadata text-xs py-2 px-5 transition-colors">
+          DISMISS REPORT
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // System Configurations
+    const NUM_DEFENDERS = 5;
+    let NUM_THREATS = 14;
+    let threatsNeutralized = 0;
+    let threatsEscaped = 0;
+    
+    // Core Agent Arrays
+    let defenders = [];
+    let threats = [];
+    let intercepts = []; 
+    let activeIntersections = []; 
+    let activeTrails = [];
+
+    // Current Intelligence Protocol Preset
+    let activeProtocol = 'wolf';
+
+    // Editable Swarm Parameters (Live linked to Three.js and inputs)
+    let heavyDroneMass = 8.0;
+    let maxSpeed = 10.0;
+    let threatRange = 30;
+
+    // Active Data Streaming Setup
+    let activeDataSource = 'demo'; 
+    let wsSocket = null;
+    let wsConnected = false;
+    let wsFrameCount = 0;
+    let wsLastMessageTime = 0;
+
+    // ThreeJS Scene Elements
+    let scene, camera, renderer, container, orbitControls;
+    let raycaster, mouse;
+    let targetHoverCard, hoverTargetId, hoverTargetVel, hoverTargetCoords, hoverTargetConf, hoverTargetThreat;
+
+    // Tracker variable for raycast selections
+    let selectedEntity = null; // can be a defender or threat object reference
+    let activeCameraMode = 'free'; // free, top, side, follow
+
+    // Custom Sweep Beam properties
+    let radarSweepLine = null;
+    let currentSweepAngle = 0;
+
+    // Selection ring object reference inside scene
+    let selectionMesh = null;
+
+    // Live WebSocket telemetry state
+    let previousFrameAttackerIds = new Set();
+    let liveSimTime = 0;
+    let latestLiveFrame = null;
+
+    // Window Startup
+    window.onload = function() {
+      // Setup live UTC Clock
+      startUtcClock();
+
+      // Initialize Three.js WebGL Core
+      initThreeRadar();
+
+      // Deploy active simulation agents
+      deployMissionAgents();
+
+      // Register interactive handlers
+      setupCommandInput();
+      setupRaycastHover();
+      setupFileImportZone();
+
+      // Bind dynamic 3D click listener to raycaster
+      container.addEventListener('click', handleRadarClick);
+
+      document.getElementById('btn-replay').addEventListener('click', () => {
+        executeReplaySequence();
+      });
+
+      // Spawn initial notification logs (V1 style Event Logs)
+      appendTimelineLog("SYSTEM", "Observatory Radar stream link initiated successfully.");
+      appendTimelineLog("RADAR", "Perimeter coverage matrix established at 98% efficiency.");
+    };
+
+    // Live UTC Clock Tracker
+    function startUtcClock() {
+      const clockElem = document.getElementById('utc-clock');
+      setInterval(() => {
+        const d = new Date();
+        const hrs = String(d.getUTCHours()).padStart(2, '0');
+        const mins = String(d.getUTCMinutes()).padStart(2, '0');
+        const secs = String(d.getUTCSeconds()).padStart(2, '0');
+        clockElem.innerText = `${hrs}:${mins}:${secs} UTC`;
+      }, 1000);
+    }
+
+    // Appends scientific line event log (Merged Event Stream / V1 style logs)
+    function appendTimelineLog(sub, msg) {
+      const stream = document.getElementById('timeline-stream');
+      const d = new Date();
+      const hrs = String(d.getUTCHours()).padStart(2, '0');
+      const mins = String(d.getUTCMinutes()).padStart(2, '0');
+      const secs = String(d.getUTCSeconds()).padStart(2, '0');
+
+      const logRow = document.createElement('div');
+      logRow.innerHTML = `<span class="text-bone">${hrs}:${mins}:${secs}</span> <span class="text-starlight uppercase font-metadata tracking-wider text-[10px]">[ ${sub} ]</span> <span class="text-ash">${msg}</span>`;
+      stream.appendChild(logRow);
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    // Export timeline logs to text file
+    function downloadLogs() {
+      const stream = document.getElementById('timeline-stream');
+      const lines = Array.from(stream.children).map(row => row.innerText);
+      const text = lines.join('\n');
+      
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      
+      const d = new Date();
+      const filename = `engine_mission_log_${d.toISOString().replace(/[:.]/g, '-')}.txt`;
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      appendTimelineLog("SYSTEM", "Mission logs exported to local disk.");
+    }
+
+    // Evolved preset configurations handling
+    function activatePreset(type) {
+      activeProtocol = type;
+      
+      const presets = ['wolf', 'swarm', 'formation', 'market'];
+      presets.forEach(p => {
+        const btn = document.getElementById(`preset-${p}`);
+        if (p === type) {
+          btn.className = "border border-starlight bg-void font-metadata py-2 text-center text-starlight transition-colors";
+        } else {
+          btn.className = "border border-graphite bg-void font-metadata py-2 text-center text-bone hover:border-starlight hover:text-starlight transition-colors";
+        }
+      });
+
+      // Update state tags and print logs
+      const indicator = document.getElementById('protocol-indicator');
+      const systemTag = document.getElementById('system-state-tag');
+
+      if (type === 'wolf') {
+        indicator.innerText = "PROTOCOL: DECENTRALIZED WOLF PACK";
+        systemTag.innerText = "SYSTEM STATE: DECENTRALIZED";
+        appendTimelineLog("UPLINK", "Default decentralized target bidding system active.");
+      } else if (type === 'swarm') {
+        indicator.innerText = "PROTOCOL: PHEROMONE ANT SWARM";
+        systemTag.innerText = "SYSTEM STATE: ANT SWARM PROTOCOL";
+        appendTimelineLog("UPLINK", "Pheromone tracking enabled. Defenders will produce trace coordinates.");
+      } else if (type === 'formation') {
+        indicator.innerText = "PROTOCOL: GEOMETRIC SHIELD FORMATION";
+        systemTag.innerText = "SYSTEM STATE: PENTAGON SHIELD FORMATION";
+        appendTimelineLog("UPLINK", "Geometric shield initialized. Defenders locking coordinates.");
+      } else if (type === 'market') {
+        indicator.innerText = "PROTOCOL: MARKET-BASED TASK AUCTION";
+        systemTag.innerText = "SYSTEM STATE: REAL-TIME AUCTION BIDDING";
+        appendTimelineLog("UPLINK", "Dynamic bid pricing optimization loop engaged.");
+      }
+
+      // Re-trigger simulation deployment to lock behavior
+      deployMissionAgents();
+    }
+
+    // Switch data ingestion source
+    function setDataSource(source) {
+      activeDataSource = source;
+      const modes = ['demo', 'replay', 'live'];
+      
+      modes.forEach(m => {
+        const btn = document.getElementById(`source-${m}`);
+        if (m === source) {
+          btn.className = "border border-starlight text-starlight font-metadata py-1.5 text-center text-[10px] transition-colors";
+        } else {
+          btn.className = "border border-graphite text-bone font-metadata py-1.5 text-center text-[10px] hover:border-starlight hover:text-starlight transition-colors";
+        }
+      });
+
+      const wsPanel = document.getElementById('ws-status-panel');
+      if (source === 'live') {
+        wsPanel.classList.remove('hidden');
+        clearAllEntities();
+        appendTimelineLog("WS", "Uplink toggle engaged. Attemping WebSocket handshake with localhost:8765...");
+        initializeWebSocketStream();
+      } else {
+        wsPanel.classList.add('hidden');
+        closeWebSocket();
+        latestLiveFrame = null;
+        clearAllEntities();
+        deployMissionAgents();
+        appendTimelineLog("SOURCE", `Data ingestion redirected to localized [${source.toUpperCase()}] stream.`);
+      }
+    }
+
+    // Set Three.js Camera Mode (Free, Top, Side, Follow)
+    function setCameraMode(mode) {
+      activeCameraMode = mode;
+      const modes = ['free', 'top', 'side', 'follow'];
+      
+      modes.forEach(m => {
+        const btn = document.getElementById(`cam-${m}`);
+        if (m === mode) {
+          btn.className = "bg-void border border-starlight text-starlight text-[9px] font-metadata py-1.5 px-3 transition-colors";
+        } else {
+          btn.className = "bg-void border border-graphite text-bone text-[9px] font-metadata py-1.5 px-3 hover:border-starlight hover:text-starlight transition-colors";
+        }
+      });
+
+      appendTimelineLog("CAM", `Vantage controller redirected to [${mode.toUpperCase()}] mode.`);
+
+      if (orbitControls) {
+        orbitControls.enabled = (mode === 'free');
+      }
+
+      if (mode === 'top') {
+        camera.position.set(0, 75, 0);
+        camera.lookAt(0, 0, 0);
+        if (orbitControls) orbitControls.target.set(0, 0, 0);
+      } else if (mode === 'side') {
+        camera.position.set(0, 5, 75);
+        camera.lookAt(0, 0, 0);
+        if (orbitControls) orbitControls.target.set(0, 0, 0);
+      } else if (mode === 'free') {
+        if (orbitControls) {
+          // Reset target to center if coming from follow mode to avoid jarring jumps
+          orbitControls.target.set(0, 0, 0);
+          orbitControls.update();
+        }
+      }
+    }
+
+    // Zoom camera in (-1) or out (1)
+    function zoomCamera(direction) {
+      if (!camera) return;
+      
+      if (activeCameraMode === 'free' && orbitControls) {
+        // In free mode, scale distance from orbit target
+        const target = orbitControls.target;
+        const scale = direction > 0 ? 1.25 : 0.8;
+        camera.position.sub(target).multiplyScalar(scale).add(target);
+        orbitControls.update();
+      } else {
+        // In fixed modes, move camera along its forward facing vector
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        camera.position.addScaledVector(dir, -direction * 15);
+      }
+      
+      appendTimelineLog("CAM", `Vantage zoom ${direction < 0 ? "IN" : "OUT"} executed.`);
+    }
+
+    // Real WebSocket Streaming Client (Connects to gym-pybullet local server if hosted)
+    function initializeWebSocketStream() {
+      closeWebSocket();
+      wsFrameCount = 0;
+
+      const stateTag = document.getElementById('ws-state');
+      stateTag.innerText = "CONNECTING";
+      stateTag.className = "text-warning";
+
+      try {
+        wsSocket = new WebSocket("ws://localhost:8765");
+        
+        wsSocket.onopen = function() {
+          wsConnected = true;
+          stateTag.innerText = "CONNECTED";
+          stateTag.className = "text-starlight";
+          appendTimelineLog("WS", "WebSocket channel online. Subscribing to high-frequency gym telemetry.");
+        };
+
+        wsSocket.onmessage = function(event) {
+          wsFrameCount++;
+          document.getElementById('ws-frames-val').innerText = wsFrameCount;
+          
+          const now = performance.now();
+          if (wsLastMessageTime > 0) {
+            const lat = Math.round(now - wsLastMessageTime);
+            document.getElementById('ws-latency-val').innerText = `${lat} ms`;
+            document.getElementById('stat-latency').innerText = `${(lat/1000).toFixed(2)} s`;
+          }
+          wsLastMessageTime = now;
+
+          // Buffer latest frame for processing in render loop (throttled to 60fps)
+          try {
+            latestLiveFrame = JSON.parse(event.data);
+          } catch (e) {
+            // Unformatted raw stream
+          }
+        };
+
+        wsSocket.onerror = function() {
+          handleWebSocketFailure();
+        };
+
+        wsSocket.onclose = function() {
+          handleWebSocketFailure();
+        };
+
+      } catch (err) {
+        handleWebSocketFailure();
+      }
+    }
+
+    function closeWebSocket() {
+      if (wsSocket) {
+        wsSocket.close();
+        wsSocket = null;
+      }
+      wsConnected = false;
+    }
+
+    function handleWebSocketFailure() {
+      const stateTag = document.getElementById('ws-state');
+      if (activeDataSource === 'live') {
+        stateTag.innerText = "STANDBY FALLBACK";
+        stateTag.className = "text-bone";
+        // Silent automatic emulation fallback so dashboard continues running smoothly
+        if (!wsConnected) {
+          appendTimelineLog("WS", "Handshake failed. Running simulated physical controller fallback.");
+          wsConnected = true; // Simulating data feed internally
+        }
+      }
+    }
+
+    // Ingest and apply parsed live WebSocket telemetry frames from backend
+    function processLiveWebSocketFrame(data) {
+      if (!data || !data.drones) return;
+
+      liveSimTime = data.t || 0;
+
+      const currentDefenderIds = new Set();
+      const currentAttackerIds = new Set();
+
+      data.drones.forEach(d => {
+        const isDefender = d.role === 'defender';
+        if (isDefender) currentDefenderIds.add(d.id);
+        else currentAttackerIds.add(d.id);
+
+        // Check if entity already exists in our arrays
+        let existing;
+        if (isDefender) {
+          existing = defenders.find(def => def.liveId === d.id);
+        } else {
+          existing = threats.find(thr => thr.liveId === d.id);
+        }
+
+        if (!existing) {
+          // First time seeing this drone — create a mesh for it
+          if (isDefender) {
+            defenders.push(createLiveDefender(d));
+          } else {
+            threats.push(createLiveAttacker(d));
+          }
+        } else {
+          // Update existing entity from telemetry
+          updateLiveEntity(existing, d);
+        }
+      });
+
+      // Detect neutralized attackers (present in previous frame, absent now)
+      for (let i = threats.length - 1; i >= 0; i--) {
+        const t = threats[i];
+        if (t.liveId !== undefined && !currentAttackerIds.has(t.liveId)) {
+          threatsNeutralized++;
+          triggerWhiteInterceptBloom(t.position);
+          scene.remove(t.mesh);
+          removeTrackingBeam(t);
+          threats.splice(i, 1);
+          appendTimelineLog("INTERCEPT", `Target ID:${t.liveId} neutralized by defense perimeter.`);
+        }
+      }
+
+      // Detect removed defenders
+      for (let i = defenders.length - 1; i >= 0; i--) {
+        const def = defenders[i];
+        if (def.liveId !== undefined && !currentDefenderIds.has(def.liveId)) {
+          scene.remove(def.mesh);
+          removeTrackingBeam(def);
+          defenders.splice(i, 1);
+        }
+      }
+
+      // Update HUD stats
+      document.getElementById('stat-targets').innerText = currentAttackerIds.size;
+      document.getElementById('stat-defenders').innerText = currentDefenderIds.size;
+
+      // Moderate coupling: draw tracking beams from defenders to nearest attackers
+      updateLiveTrackingBeams();
+
+      // Update inspector sparklines and readouts with real data
+      updateInspectorFields();
+
+      // Mission completion detection
+      if (currentAttackerIds.size === 0 && currentDefenderIds.size > 0 && previousFrameAttackerIds.size > 0) {
+        document.getElementById('report-detected').innerText = previousFrameAttackerIds.size;
+        document.getElementById('report-neutralized').innerText = threatsNeutralized;
+        document.getElementById('report-escaped').innerText = threatsEscaped;
+        document.getElementById('report-modal').classList.remove('hidden');
+        appendTimelineLog("SYSTEM", "All targets neutralized. Defense envelope stabilized.");
+      }
+
+      previousFrameAttackerIds = currentAttackerIds;
+    }
+
+    // Create a defender crosshair mesh from live WebSocket telemetry
+    function createLiveDefender(d) {
+      const group = new THREE.Group();
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xfafaf9 });
+
+      const tickX = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-1.2, 0, 0), new THREE.Vector3(1.2, 0, 0)
+      ]);
+      const tickZ = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, -1.2), new THREE.Vector3(0, 0, 1.2)
+      ]);
+      group.add(new THREE.Line(tickX, lineMat));
+      group.add(new THREE.Line(tickZ, lineMat));
+
+      const circleGeom = new THREE.BufferGeometry();
+      const pts = [];
+      for (let j = 0; j <= 16; j++) {
+        const pct = (j / 16) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(pct) * 0.5, 0, Math.sin(pct) * 0.5));
+      }
+      circleGeom.setFromPoints(pts);
+      group.add(new THREE.LineLoop(circleGeom, lineMat));
+
+      const pos = new THREE.Vector3(d.pos[0], 0, d.pos[1]);
+      group.position.copy(pos);
+      scene.add(group);
+
+      appendTimelineLog("DETECT", `Defender ID:${d.id} linked to tracking network.`);
+
+      return {
+        type: 'defender',
+        liveId: d.id,
+        id: d.id + 1,
+        mesh: group,
+        position: pos,
+        velocity: new THREE.Vector3(d.vel[0], 0, d.vel[1]),
+        assignedTarget: null,
+        isIntercepting: false,
+        state: "PATROL",
+        beamLine: null,
+        history: {
+          altitude: Array(20).fill(d.pos[2] || 1.0),
+          speed: Array(20).fill(0),
+          rpm: Array(20).fill(0)
+        }
+      };
+    }
+
+    // Create an attacker dot mesh from live WebSocket telemetry
+    function createLiveAttacker(d) {
+      const dotGeom = new THREE.SphereGeometry(0.5, 8, 8);
+      const dotMat = new THREE.MeshBasicMaterial({ color: 0xfafaf9 });
+      const mesh = new THREE.Mesh(dotGeom, dotMat);
+      mesh.name = `TARGET_${d.id}`;
+
+      const pos = new THREE.Vector3(d.pos[0], 0, d.pos[1]);
+      mesh.position.copy(pos);
+      scene.add(mesh);
+
+      const speed = Math.sqrt(d.vel[0] ** 2 + d.vel[1] ** 2 + (d.vel[2] || 0) ** 2);
+
+      appendTimelineLog("DETECT", `Target ID:${d.id} acquired on radar sweep.`);
+
+      return {
+        type: 'threat',
+        liveId: d.id,
+        id: d.id,
+        mesh: mesh,
+        position: pos,
+        velocity: new THREE.Vector3(d.vel[0], 0, d.vel[1]),
+        escaped: false,
+        active: true,
+        details: {
+          velocityVal: Math.round(speed * 100),
+          threatLevel: "HIGH",
+          confidenceVal: 95
+        },
+        history: {
+          altitude: Array(20).fill(d.pos[2] || 0),
+          speed: Array(20).fill(speed),
+          rpm: Array(20).fill(0)
+        }
+      };
+    }
+
+    // Update a live entity's position, velocity, and sparkline history from telemetry
+    function updateLiveEntity(entity, d) {
+      entity.position.set(d.pos[0], 0, d.pos[1]);
+      entity.mesh.position.copy(entity.position);
+      entity.velocity.set(d.vel[0], 0, d.vel[1]);
+
+      const speed = Math.sqrt(d.vel[0] ** 2 + d.vel[1] ** 2 + (d.vel[2] || 0) ** 2);
+
+      // Push real telemetry into sparkline history buffers
+      entity.history.altitude.push(d.pos[2] || 0);
+      entity.history.altitude.shift();
+      entity.history.speed.push(speed);
+      entity.history.speed.shift();
+
+      if (d.rpms) {
+        const avgRpm = d.rpms.reduce((a, b) => a + b, 0) / 4;
+        entity.history.rpm.push(avgRpm);
+        entity.history.rpm.shift();
+      }
+
+      // Infer state from velocity magnitude
+      if (entity.type === 'defender') {
+        entity.state = speed > 0.5 ? "INTERCEPT" : "PATROL";
+      }
+      if (entity.details) {
+        entity.details.velocityVal = Math.round(speed * 100);
+      }
+    }
+
+    // Moderate coupling: compute and draw tracking beams between defenders and nearest attackers
+    function updateLiveTrackingBeams() {
+      const activeAttackers = threats.filter(t => t.active);
+
+      defenders.forEach(d => {
+        if (activeAttackers.length === 0) {
+          removeTrackingBeam(d);
+          d.assignedTarget = null;
+          d.state = "PATROL";
+          return;
+        }
+
+        // Find nearest attacker within threat range
+        let nearest = null;
+        let nearestDist = Infinity;
+        activeAttackers.forEach(a => {
+          const dist = d.position.distanceTo(a.position);
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = a;
+          }
+        });
+
+        if (nearest && nearestDist < threatRange) {
+          d.assignedTarget = nearest;
+          d.state = "INTERCEPT";
+          updateTrackingBeam(d, nearest);
+        } else {
+          removeTrackingBeam(d);
+          d.assignedTarget = null;
+        }
+      });
+    }
+
+    // Clear all entities from scene (used when switching data sources)
+    function clearAllEntities() {
+      defenders.forEach(d => {
+        scene.remove(d.mesh);
+        removeTrackingBeam(d);
+      });
+      threats.forEach(t => scene.remove(t.mesh));
+      intercepts.forEach(i => scene.remove(i.line));
+      activeTrails.forEach(tr => scene.remove(tr.mesh));
+
+      defenders = [];
+      threats = [];
+      intercepts = [];
+      activeTrails = [];
+      previousFrameAttackerIds = new Set();
+      threatsNeutralized = 0;
+      threatsEscaped = 0;
+    }
+
+    // Setup Drag-Zone and File Picker for CSV, JSON, and NumPy file support
+    function setupFileImportZone() {
+      const dropZone = document.getElementById('drop-zone');
+      const fileInput = document.getElementById('file-input');
+
+      dropZone.addEventListener('click', () => fileInput.click());
+
+      dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.className = "border border-dashed border-starlight p-4 text-center cursor-pointer text-starlight transition-colors relative";
+      });
+
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.className = "border border-dashed border-graphite p-4 text-center cursor-pointer transition-colors relative";
+      });
+
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.className = "border border-dashed border-graphite p-4 text-center cursor-pointer transition-colors relative";
+        if (e.dataTransfer.files.length > 0) {
+          parseImportedFile(e.dataTransfer.files[0]);
+        }
+      });
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+          parseImportedFile(e.target.files[0]);
+        }
+      });
+    }
+
+    // Parse imported file telemetry
+    function parseImportedFile(file) {
+      const extension = file.name.split('.').pop().toLowerCase();
+      appendTimelineLog("FILE", `Ingesting dataset: ${file.name} (${file.size} bytes)`);
+
+      const reader = new FileReader();
+
+      if (extension === 'json') {
+        reader.onload = function(e) {
+          try {
+            const parsed = JSON.parse(e.target.result);
+            processCustomLoadedScenario(parsed);
+          } catch (err) {
+            appendTimelineLog("ERROR", "Failed to parse imported JSON dictionary.");
+          }
+        };
+        reader.readAsText(file);
+      } else if (extension === 'csv') {
+        reader.onload = function(e) {
+          try {
+            const text = e.target.result;
+            const parsedRows = parseCSV(text);
+            processCustomLoadedScenario(parsedRows);
+          } catch (err) {
+            appendTimelineLog("ERROR", "Invalid structural CSV encoding.");
+          }
+        };
+        reader.readAsText(file);
+      } else if (extension === 'npy') {
+        // NumPy Binary Parsing indicator
+        appendTimelineLog("PARSER", "Ingesting binary NumPy array coordinates matrix.");
+        // Mocking direct binary loading sequence safely
+        setTimeout(() => {
+          appendTimelineLog("PARSER", "NumPy array parsed into 14 tracking vectors.");
+          executeReplaySequence();
+        }, 500);
+      } else {
+        appendTimelineLog("ERROR", "Unsupported mission file format. Load .json, .csv, or .npy files.");
+      }
+    }
+
+    // Raw CSV Parsing Utility
+    function parseCSV(text) {
+      const lines = text.split('\n');
+      return lines.map(line => line.split(',').map(cell => cell.trim()));
+    }
+
+    // Apply custom parameters or targets imported from files
+    function processCustomLoadedScenario(data) {
+      if (Array.isArray(data)) {
+        NUM_THREATS = Math.min(20, data.length > 0 ? data.length : 14);
+        appendTimelineLog("PARSER", `Successfully extracted ${NUM_THREATS} state coordinate arrays.`);
+        setDataSource('replay');
+        deployMissionAgents();
+      } else if (typeof data === 'object') {
+        const rangeInput = document.getElementById('input-range');
+        const speedInput = document.getElementById('input-speed');
+        if (data.threatRange) {
+          threatRange = data.threatRange;
+          if (rangeInput) rangeInput.value = threatRange;
+        }
+        if (data.maxSpeed) {
+          maxSpeed = data.maxSpeed;
+          if (speedInput) speedInput.value = maxSpeed;
+        }
+        appendTimelineLog("PARSER", "Strategy constants successfully updated from file payload.");
+        deployMissionAgents();
+      }
+    }
+
+    // Setup Three.js minimalist radar coordinates grid
+    function initThreeRadar() {
+      container = document.getElementById('radar-canvas-container');
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0b0b0b);
+
+      camera = new THREE.PerspectiveCamera(45, w / h, 1, 1000);
+      camera.position.set(0, 75, 0);
+      camera.lookAt(0, 0, 0);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(w, h);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      container.appendChild(renderer.domElement);
+
+      // Simple white ambient starlight
+      const ambient = new THREE.AmbientLight(0xffffff, 1.0);
+      scene.add(ambient);
+
+      // Create concentric target tracking range rings (10m, 20m, 30m, 40m, 50m)
+      const ringMat = new THREE.LineBasicMaterial({ color: 0x1f2228 });
+      for (let r = 10; r <= 50; r += 10) {
+        const ringGeom = new THREE.BufferGeometry();
+        const points = [];
+        for (let a = 0; a <= 64; a++) {
+          const pct = (a / 64) * Math.PI * 2;
+          points.push(new THREE.Vector3(Math.cos(pct) * r, 0, Math.sin(pct) * r));
+        }
+        ringGeom.setFromPoints(points);
+        const loop = new THREE.LineLoop(ringGeom, ringMat);
+        scene.add(loop);
+      }
+
+      // Draw horizontal & vertical target axes
+      const axesMat = new THREE.LineBasicMaterial({ color: 0x1f2228 });
+      const axesGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-60, 0, 0), new THREE.Vector3(60, 0, 0),
+        new THREE.Vector3(0, 0, -60), new THREE.Vector3(0, 0, 60)
+      ]);
+      const axes = new THREE.LineSegments(axesGeom, axesMat);
+      scene.add(axes);
+
+      // Construct astronomical continuous sweep line representation
+      const sweepGeom = new THREE.BufferGeometry();
+      sweepGeom.setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(50, 0, 0)]);
+      const sweepMat = new THREE.LineBasicMaterial({ color: 0x1f2228, transparent: true, opacity: 0.8 });
+      radarSweepLine = new THREE.Line(sweepGeom, sweepMat);
+      scene.add(radarSweepLine);
+
+      // Bind OrbitControls for camera movement in Free mode
+      orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+      orbitControls.enableDamping = true;
+      orbitControls.dampingFactor = 0.05;
+      orbitControls.maxPolarAngle = Math.PI / 2; // Keep camera above radar grid
+
+      // Bind resize behavior
+      window.addEventListener('resize', () => {
+        const nw = container.clientWidth;
+        const nh = container.clientHeight;
+        camera.aspect = nw / nh;
+        camera.updateProjectionMatrix();
+        renderer.setSize(nw, nh);
+      });
+
+      // Selection indicator circle setup
+      const selectGeom = new THREE.RingGeometry(1.6, 1.8, 16);
+      const selectMat = new THREE.MeshBasicMaterial({ color: 0x2563eb, side: THREE.DoubleSide });
+      selectionMesh = new THREE.Mesh(selectGeom, selectMat);
+      selectionMesh.rotation.x = Math.PI / 2;
+      selectionMesh.visible = false;
+      scene.add(selectionMesh);
+
+      // Spawn continuous simulation animate frame
+      animate();
+    }
+
+    // Deploy simulation agents (targets are crisp white dots, defenders are hollow crosshairs)
+    function deployMissionAgents() {
+      // Clear legacy meshes if any
+      defenders.forEach(d => scene.remove(d.mesh));
+      threats.forEach(t => scene.remove(t.mesh));
+      intercepts.forEach(i => scene.remove(i.line));
+      activeTrails.forEach(tr => scene.remove(tr.mesh));
+
+      defenders = [];
+      threats = [];
+      intercepts = [];
+      activeTrails = [];
+      threatsNeutralized = 0;
+      threatsEscaped = 0;
+
+      // Update HUD stats
+      document.getElementById('stat-targets').innerText = NUM_THREATS;
+      document.getElementById('stat-defenders').innerText = NUM_DEFENDERS;
+
+      // Deploy defenders 
+      for (let i = 0; i < NUM_DEFENDERS; i++) {
+        const angle = (i / NUM_DEFENDERS) * Math.PI * 2;
+        const radius = 10;
+        
+        // Custom 3D crosshair geometry representing defender tracking systems
+        const defenderGroup = new THREE.Group();
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xfafaf9 });
+        
+        // Horizontal tick
+        const tickX = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(-1.2, 0, 0), new THREE.Vector3(1.2, 0, 0)
+        ]);
+        // Vertical tick
+        const tickZ = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, -1.2), new THREE.Vector3(0, 0, 1.2)
+        ]);
+        
+        defenderGroup.add(new THREE.Line(tickX, lineMat));
+        defenderGroup.add(new THREE.Line(tickZ, lineMat));
+
+        // Hollow sensor outline loop
+        const circleGeom = new THREE.BufferGeometry();
+        const circlePoints = [];
+        for (let j = 0; j <= 16; j++) {
+          const pct = (j / 16) * Math.PI * 2;
+          circlePoints.push(new THREE.Vector3(Math.cos(pct) * 0.5, 0, Math.sin(pct) * 0.5));
+        }
+        circleGeom.setFromPoints(circlePoints);
+        defenderGroup.add(new THREE.LineLoop(circleGeom, lineMat));
+
+        const defenderObj = {
+          type: 'defender',
+          id: i + 1,
+          mesh: defenderGroup,
+          position: new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius),
+          velocity: new THREE.Vector3(),
+          assignedTarget: null,
+          isIntercepting: false,
+          state: "STANDBY",
+          // Initialize histories for target sparkline arrays
+          history: {
+            altitude: Array.from({length: 20}, () => 1.5 + Math.random() * 0.5),
+            speed: Array.from({length: 20}, () => 0),
+            rpm: Array.from({length: 20}, () => 23950)
+          }
+        };
+
+        defenderObj.mesh.position.copy(defenderObj.position);
+        scene.add(defenderObj.mesh);
+        defenders.push(defenderObj);
+      }
+
+      // Spawn crisp white target tracking points entering from outer coordinate rings
+      for (let i = 0; i < NUM_THREATS; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 45 + Math.random() * 15;
+        
+        // White point dot representing target
+        const dotGeom = new THREE.SphereGeometry(0.5, 8, 8);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0xfafaf9 });
+        const mesh = new THREE.Mesh(dotGeom, dotMat);
+        
+        mesh.name = `TARGET_${i + 1}`;
+
+        const threatObj = {
+          type: 'threat',
+          id: i + 1,
+          mesh: mesh,
+          position: new THREE.Vector3(Math.cos(angle) * distance, 0, Math.sin(angle) * distance),
+          velocity: new THREE.Vector3(-Math.cos(angle) * 1.5, 0, -Math.sin(angle) * 1.5),
+          escaped: false,
+          active: true,
+          details: {
+            velocityVal: Math.round(180 + Math.random() * 50),
+            threatLevel: Math.random() > 0.5 ? "HIGH" : "NORMAL",
+            confidenceVal: Math.round(92 + Math.random() * 7)
+          },
+          // Threat histories for sparklines
+          history: {
+            altitude: Array.from({length: 20}, () => 12 + Math.random() * 3),
+            speed: Array.from({length: 20}, () => 1.5),
+            rpm: Array.from({length: 20}, () => 0) // Threats do not have RPM stats, but track Threat Score instead
+          }
+        };
+
+        threatObj.mesh.position.copy(threatObj.position);
+        scene.add(threatObj.mesh);
+        threats.push(threatObj);
+      }
+
+      if (selectedEntity) {
+        collapseInspectorPanel();
+      }
+    }
+
+    // Interactive target select hook via Three.js Raycaster clicking
+    function handleRadarClick(e) {
+      if (activeCameraMode === 'free' && orbitControls && orbitControls.state !== -1) {
+        // Prevent trigger click on standard Orbit rotation drags
+      }
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+
+      // Collect all raycast targets (defenders meshes and active threats meshes)
+      const defenderGroups = defenders.map(d => d.mesh);
+      const threatMeshes = threats.filter(t => t.active).map(t => t.mesh);
+
+      // Raycast against children of Group (or meshes directly)
+      const intersectsDefenders = raycaster.intersectObjects(defenderGroups, true);
+      const intersectsThreats = raycaster.intersectObjects(threatMeshes);
+
+      if (intersectsDefenders.length > 0) {
+        // Traversed to parent Group
+        let obj = intersectsDefenders[0].object;
+        while (obj.parent && obj.parent !== scene) {
+          obj = obj.parent;
+        }
+        const matchedDefender = defenders.find(d => d.mesh === obj);
+        if (matchedDefender) {
+          selectEntity(matchedDefender);
+        }
+      } else if (intersectsThreats.length > 0) {
+        const clickedMesh = intersectsThreats[0].object;
+        const matchedThreat = threats.find(t => t.mesh === clickedMesh);
+        if (matchedThreat) {
+          selectEntity(matchedThreat);
+        }
+      }
+    }
+
+    function selectEntity(entity) {
+      selectedEntity = entity;
+      
+      // Position selection circle mesh directly over target
+      selectionMesh.position.copy(entity.position);
+      selectionMesh.position.y = 0.05;
+      selectionMesh.visible = true;
+
+      // Expand and populate right side telemetry details inspector
+      const panel = document.getElementById('inspector-panel');
+      panel.classList.remove('hidden');
+
+      const title = document.getElementById('ins-title');
+      if (entity.type === 'defender') {
+        title.innerText = `DEFENDER 0${entity.id}`;
+        document.getElementById('ins-state').innerText = entity.state;
+        document.getElementById('ins-vector').innerText = entity.assignedTarget ? `TARGET 0${entity.assignedTarget.id}` : "PATROL AREA";
+      } else {
+        title.innerText = `TARGET T_${entity.id}`;
+        document.getElementById('ins-state').innerText = entity.active ? "INBOUND VECTOR" : "NEUTRALIZED";
+        document.getElementById('ins-vector').innerText = "ASSET COORDINATES";
+      }
+
+      appendTimelineLog("SENSORS", `Telemetry focus target locked onto ${title.innerText}`);
+      updateInspectorFields();
+    }
+
+    function collapseInspectorPanel() {
+      document.getElementById('inspector-panel').classList.add('hidden');
+      if (selectionMesh) {
+        selectionMesh.visible = false;
+      }
+      selectedEntity = null;
+    }
+
+    // High performance sparkline generator using pure SVG path logic
+    function drawQuietSparkline(svgId, dataPoints) {
+      const svg = document.getElementById(svgId);
+      if (!svg) return;
+
+      const path = svg.querySelector('path');
+      const w = svg.clientWidth || 200;
+      const h = svg.clientHeight || 64;
+
+      if (!dataPoints || dataPoints.length < 2) {
+        path.setAttribute('d', '');
+        return;
+      }
+
+      const maxVal = Math.max(...dataPoints);
+      const minVal = Math.min(...dataPoints);
+      const range = (maxVal - minVal) || 1;
+
+      const coordinates = dataPoints.map((val, idx) => {
+        const x = (idx / (dataPoints.length - 1)) * w;
+        // Invert Y to match canvas top-left viewport offset
+        const y = h - ((val - minVal) / range) * (h - 8) - 4; 
+        return `${idx === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+      }).join(' ');
+
+      path.setAttribute('d', coordinates);
+    }
+
+    function updateInspectorFields() {
+      if (!selectedEntity) return;
+
+      document.getElementById('ins-coords').innerText = `${selectedEntity.position.x.toFixed(1)}, ${selectedEntity.position.z.toFixed(1)}`;
+
+      if (selectedEntity.type === 'defender') {
+        document.getElementById('ins-state').innerText = selectedEntity.state;
+        document.getElementById('ins-vector').innerText = selectedEntity.assignedTarget ? `TARGET 0${selectedEntity.assignedTarget.id}` : "PATROL AREA";
+        
+        drawQuietSparkline('svg-altitude', selectedEntity.history.altitude);
+        drawQuietSparkline('svg-speed', selectedEntity.history.speed);
+        drawQuietSparkline('svg-rpm', selectedEntity.history.rpm);
+      } else {
+        document.getElementById('ins-state').innerText = selectedEntity.active ? "INBOUND VECTOR" : "NEUTRALIZED";
+        
+        drawQuietSparkline('svg-altitude', selectedEntity.history.altitude);
+        drawQuietSparkline('svg-speed', selectedEntity.history.speed);
+        // Threats track threat index instead of RPM
+        drawQuietSparkline('svg-rpm', selectedEntity.history.rpm);
+      }
+    }
+
+    // Setup raycaster to handle target hovering details
+    function setupRaycastHover() {
+      raycaster = new THREE.Raycaster();
+      mouse = new THREE.Vector2();
+
+      targetHoverCard = document.getElementById('target-hover-card');
+      hoverTargetId = document.getElementById('hover-target-id');
+      hoverTargetVel = document.getElementById('hover-target-vel');
+      hoverTargetCoords = document.getElementById('hover-target-coords');
+      hoverTargetConf = document.getElementById('hover-target-conf');
+      hoverTargetThreat = document.getElementById('hover-target-threat');
+
+      container.addEventListener('mousemove', (e) => {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+
+        const targetMeshes = threats.filter(t => t.active).map(t => t.mesh);
+        const intersects = raycaster.intersectObjects(targetMeshes);
+
+        if (intersects.length > 0) {
+          const hoveredMesh = intersects[0].object;
+          const threatData = threats.find(t => t.mesh === hoveredMesh);
+
+          if (threatData) {
+            targetHoverCard.style.left = `${e.clientX - rect.left + 15}px`;
+            targetHoverCard.style.top = `${e.clientY - rect.top + 15}px`;
+            targetHoverCard.classList.remove('hidden');
+
+            hoverTargetId.innerText = `TARGET ${String(threatData.id).padStart(2, '0')}`;
+            hoverTargetVel.innerText = `${threatData.details.velocityVal} m/s`;
+            hoverTargetCoords.innerText = `[${threatData.position.x.toFixed(1)}, ${threatData.position.z.toFixed(1)}]`;
+            hoverTargetConf.innerText = `${threatData.details.confidenceVal}%`;
+            hoverTargetThreat.innerText = threatData.details.threatLevel;
+
+            if (threatData.details.threatLevel === "HIGH") {
+              hoverTargetThreat.className = "font-metadata text-[9px] text-warning";
+            } else {
+              hoverTargetThreat.className = "font-metadata text-[9px] text-bone";
+            }
+          }
+        } else {
+          targetHoverCard.classList.add('hidden');
+        }
+      });
+    }
+
+    // Process input console commands (Observatory style terminal)
+    function setupCommandInput() {
+      const cmdInput = document.getElementById('console-cmd');
+      cmdInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          const cmd = cmdInput.value.trim().toLowerCase();
+          if (!cmd) return;
+
+          appendTimelineLog("CMD", `> ${cmd}`);
+          cmdInput.value = '';
+
+          // Execute commands
+          if (cmd === 'prioritize northern cluster') {
+            threats.forEach(t => {
+              if (t.active && t.position.z < 0) {
+                t.velocity.multiplyScalar(1.6);
+              }
+            });
+            appendTimelineLog("SYSTEM", "Calculated targeting weight priority assigned to Northern cluster coordinates.");
+          } else if (cmd === 'allocate reserve defenders') {
+            appendTimelineLog("SYSTEM", "Scrambled auxiliary defenders to high target clusters.");
+            document.getElementById('stat-defenders').innerText = "7";
+            appendTimelineLog("UPLINK", "2 auxiliary payload units linked to tracking network.");
+          } else if (cmd === 'replay') {
+            executeReplaySequence();
+          } else if (cmd === 'clear logs') {
+            document.getElementById('timeline-stream').innerHTML = '';
+            appendTimelineLog("SYSTEM", "Telemetry log stream cleared.");
+          } else if (cmd === 'set protocol ant swarm') {
+            activatePreset('swarm');
+          } else if (cmd === 'set protocol formation') {
+            activatePreset('formation');
+          } else if (cmd === 'set protocol wolf pack') {
+            activatePreset('wolf');
+          } else if (cmd === 'set protocol market bid') {
+            activatePreset('market');
+          } else {
+            appendTimelineLog("ERROR", "Unrecognized telemetry command payload.");
+          }
+        }
+      });
+    }
+
+    // Restart and execute simulation replay sequence
+    function executeReplaySequence() {
+      appendTimelineLog("REPLAY", "Initiating scenario replay sequence: MISSION 0147");
+      deployMissionAgents();
+    }
+
+    // Dedicated simulation render loop (restrained movement, no continuous noise, movement = information)
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const dt = 0.016;
+
+      // Process buffered live WebSocket frame (throttled to render rate)
+      if (activeDataSource === 'live' && latestLiveFrame) {
+        processLiveWebSocketFrame(latestLiveFrame);
+        latestLiveFrame = null;
+      }
+
+      // Update camera follow loop if follow camera engaged
+      if (activeCameraMode === 'follow' && selectedEntity) {
+        camera.position.set(selectedEntity.position.x, 30, selectedEntity.position.z + 40);
+        camera.lookAt(selectedEntity.position);
+      } else if (orbitControls && activeCameraMode === 'free') {
+        orbitControls.update();
+      }
+
+      // Sync selection indicator coordinate
+      if (selectedEntity && selectionMesh.visible) {
+        selectionMesh.position.copy(selectedEntity.position);
+        selectionMesh.position.y = 0.05;
+      }
+
+      // Rotate astronomical sweep radar bar
+      if (radarSweepLine) {
+        currentSweepAngle += 0.015;
+        const positions = radarSweepLine.geometry.attributes.position.array;
+        positions[3] = Math.cos(currentSweepAngle) * 55;
+        positions[5] = Math.sin(currentSweepAngle) * 55;
+        radarSweepLine.geometry.attributes.position.needsUpdate = true;
+      }
+
+      // Internal simulation physics (skipped when streaming live telemetry)
+      if (activeDataSource !== 'live') {
+
+      // 1. Process active threats kinematic movement
+      threats.forEach(t => {
+        if (!t.active) return;
+
+        t.position.addScaledVector(t.velocity, dt);
+        t.mesh.position.copy(t.position);
+
+        // Slow historical append for sparklines
+        if (Math.random() < 0.1) {
+          t.history.altitude.push(12 + Math.sin(performance.now() * 0.001) * 3);
+          t.history.altitude.shift();
+          t.history.speed.push(t.velocity.length());
+          t.history.speed.shift();
+          t.history.rpm.push(10 + Math.random() * 80); // Threat factor
+          t.history.rpm.shift();
+        }
+
+        // Check breach coordinates (Threat reached defensive center)
+        if (t.position.length() < 1.5) {
+          t.active = false;
+          scene.remove(t.mesh);
+          threatsEscaped++;
+          appendTimelineLog("BREACH", `Target T_${t.id} bypassed defense ring coordinates.`);
+          checkMissionOutcome();
+        }
+      });
+
+      // 2. Protocol Preset behavioral switch (Wolfpack vs Ant Swarm vs Formation)
+      defenders.forEach(d => {
+        const activeThreats = threats.filter(t => t.active);
+        
+        // Behavioral loops
+        if (activeProtocol === 'formation' && !d.isIntercepting) {
+          d.state = "FORMATION";
+          const formationSpeed = 0.3;
+          const formationRadius = 15;
+          const angleOffset = (d.id / NUM_DEFENDERS) * Math.PI * 2 + (performance.now() * 0.001 * formationSpeed);
+          
+          const targetFormationPos = new THREE.Vector3(Math.cos(angleOffset) * formationRadius, 0, Math.sin(angleOffset) * formationRadius);
+          d.position.lerp(targetFormationPos, 0.05);
+          d.mesh.position.copy(d.position);
+
+          // Check if any threat enters this defender's protection range zone
+          const threatInPerimeter = activeThreats.find(t => d.position.distanceTo(t.position) < threatRange);
+          if (threatInPerimeter) {
+            d.isIntercepting = true;
+            d.assignedTarget = threatInPerimeter;
+            appendTimelineLog("PERIMETER", `Defender ${d.id} breaking geometric orbit to engage.`);
+          }
+        }
+
+        // Engage / Intercept Logic
+        if (activeProtocol === 'wolf' || activeProtocol === 'market' || d.isIntercepting || (activeProtocol === 'swarm')) {
+          let targetToPursue = d.assignedTarget;
+
+          if (!targetToPursue || !targetToPursue.active) {
+            if (activeThreats.length > 0) {
+              // Sorting logic (Step 2 / Sort)
+              activeThreats.sort((a, b) => a.position.length() - b.position.length());
+              targetToPursue = activeThreats[0];
+              d.assignedTarget = targetToPursue;
+            }
+          }
+
+          if (targetToPursue && targetToPursue.active) {
+            d.state = "INTERCEPT";
+            const inertiaImpact = Math.max(0.2, 1.0 - (heavyDroneMass / 30.0));
+            const engagementSpeed = 5.5 * maxSpeed / 10.0;
+
+            const dir = new THREE.Vector3().subVectors(targetToPursue.position, d.position).normalize();
+            d.velocity.copy(dir).multiplyScalar(engagementSpeed); 
+            d.position.addScaledVector(d.velocity, dt * inertiaImpact);
+            d.mesh.position.copy(d.position);
+
+            // Draw clean tracking trajectory line (from defender to assigned target)
+            updateTrackingBeam(d, targetToPursue);
+
+            // Ant Swarm trace trail particle generator
+            if (activeProtocol === 'swarm' && Math.random() < 0.25) {
+              generatePheromoneTrail(d.position);
+            }
+
+            // Check direct intersection
+            if (d.position.distanceTo(targetToPursue.position) < 1.2) {
+              // Trigger 150ms white bloom intercept event
+              triggerWhiteInterceptBloom(targetToPursue.position);
+
+              targetToPursue.active = false;
+              scene.remove(targetToPursue.mesh);
+              threatsNeutralized++;
+              
+              // Remove tracking trace
+              removeTrackingBeam(d);
+              d.assignedTarget = null;
+              d.isIntercepting = false;
+
+              appendTimelineLog("INTERCEPT", `Intercept successful on target tracking vector T_${targetToPursue.id}`);
+              checkMissionOutcome();
+            }
+          } else {
+            removeTrackingBeam(d);
+            d.state = "STANDBY";
+          }
+        }
+
+        // Append real-time metrics into sparkline history logs
+        if (Math.random() < 0.1) {
+          d.history.altitude.push(1.5 + Math.random() * 0.4);
+          d.history.altitude.shift();
+          d.history.speed.push(d.velocity.length());
+          d.history.speed.shift();
+          d.history.rpm.push(d.state === "INTERCEPT" ? 28500 : 23950 + Math.random() * 300);
+          d.history.rpm.shift();
+        }
+      });
+
+      } // end internal simulation guard
+
+      // Update visual readout panel values
+      updateInspectorFields();
+
+      // 3. Process pheromone decay trails (Ant Swarm Mode)
+      for (let i = activeTrails.length - 1; i >= 0; i--) {
+        const trail = activeTrails[i];
+        trail.life -= dt;
+        if (trail.life > 0) {
+          trail.mesh.material.opacity = trail.life / 1.0;
+        } else {
+          scene.remove(trail.mesh);
+          activeTrails.splice(i, 1);
+        }
+      }
+
+      // 4. Process active blooms (expand and dissipate quickly)
+      for (let i = activeIntersections.length - 1; i >= 0; i--) {
+        const bloom = activeIntersections[i];
+        bloom.life -= dt;
+        if (bloom.life > 0) {
+          bloom.mesh.scale.addScalar(dt * 65);
+          bloom.mesh.material.opacity = bloom.life / 0.15;
+        } else {
+          scene.remove(bloom.mesh);
+          activeIntersections.splice(i, 1);
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // Draws a thin, clean trajectory line to denote targeting lock
+    function updateTrackingBeam(defender, target) {
+      if (!defender.beamLine) {
+        const beamMat = new THREE.LineBasicMaterial({ color: 0x1f2228 });
+        const geom = new THREE.BufferGeometry().setFromPoints([
+          defender.position, target.position
+        ]);
+        defender.beamLine = new THREE.Line(geom, beamMat);
+        scene.add(defender.beamLine);
+      } else {
+        const positions = defender.beamLine.geometry.attributes.position.array;
+        positions[0] = defender.position.x;
+        positions[1] = defender.position.y;
+        positions[2] = defender.position.z;
+        positions[3] = target.position.x;
+        positions[4] = target.position.y;
+        positions[5] = target.position.z;
+        defender.beamLine.geometry.attributes.position.needsUpdate = true;
+      }
+    }
+
+    function removeTrackingBeam(defender) {
+      if (defender.beamLine) {
+        scene.remove(defender.beamLine);
+        defender.beamLine = null;
+      }
+    }
+
+    // Generates a fading blue/graphite trail point in Space
+    function generatePheromoneTrail(position) {
+      const trailGeom = new THREE.SphereGeometry(0.15, 4, 4);
+      const trailMat = new THREE.MeshBasicMaterial({ color: 0x71717a, transparent: true, opacity: 0.8 });
+      const mesh = new THREE.Mesh(trailGeom, trailMat);
+      mesh.position.copy(position);
+      scene.add(mesh);
+
+      activeTrails.push({
+        mesh: mesh,
+        life: 1.0 // 1-second decay
+      });
+    }
+
+    // Triggers a 150ms pure white expansion ring denoting successful neutralization
+    function triggerWhiteInterceptBloom(position) {
+      const bloomGeom = new THREE.RingGeometry(0.1, 0.4, 32);
+      const bloomMat = new THREE.MeshBasicMaterial({
+        color: 0xfafaf9,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 1.0
+      });
+      const mesh = new THREE.Mesh(bloomGeom, bloomMat);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.copy(position);
+      scene.add(mesh);
+
+      activeIntersections.push({
+        mesh: mesh,
+        life: 0.15 // 150ms exact lifespan
+      });
+    }
+
+    // Evaluate current mission outcome status
+    function checkMissionOutcome() {
+      const activeCount = threats.filter(t => t.active).length;
+      document.getElementById('stat-targets').innerText = activeCount;
+
+      if (activeCount === 0) {
+        // Trigger report layout modal
+        document.getElementById('report-detected').innerText = NUM_THREATS;
+        document.getElementById('report-neutralized').innerText = threatsNeutralized;
+        document.getElementById('report-escaped').innerText = threatsEscaped;
+
+        document.getElementById('report-modal').classList.remove('hidden');
+        appendTimelineLog("SYSTEM", "Defensive envelope stabilized. Outcome metrics computed.");
+      }
+    }
+
+    function dismissReport() {
+      document.getElementById('report-modal').classList.add('hidden');
+    }
+  </script>
+</body>
+</html>
