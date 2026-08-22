@@ -5,44 +5,59 @@ per-episode raw metrics in `eval_results.csv`, aggregates in `eval_summary.csv`.
 
 ## Methodology
 - Cells: {close_quarters 5v3@80m, standard 8v5@260m} x {full, greedy_assign, legacy_all}
-- 6 seeded episodes/cell (seeds 42-47, common random numbers across variants)
-- Scenario lethality re-tuned (`hit_rate` 2.5 / 0.6 per sec) after a pilot run showed
-  shipped rates (12.3/s) resolve battles inside warm-up hover, making all variants
-  byte-identical — reported as a finding, not hidden.
-- far_field (10v6@320m) defined and supported by the harness; excluded from this run
-  purely for wall-clock budget (~60s+ per episode headless).
+  plus far_field 10v6@320m x {full, no_kalman, pursuit, greedy_assign, legacy_all}
+- 6 seeded episodes/cell (seeds 42-47 for close/standard, 1000-1005 for far_field;
+  common random numbers across variants within each scenario)
+- Scenario lethality re-tuned (`hit_rate` 2.5 / 0.6 / 0.35 per sec) after a pilot run
+  showed shipped rates (12.3/s) resolve battles inside warm-up hover, making all
+  variants byte-identical — reported as a finding, not hidden.
+- far_field run completed headless (~2 min wall for all 30 episodes).
 
-## Scoreboard (36 episodes)
+## Scoreboard (66 episodes)
 
-| scenario | variant | n | win | wipe | mean losses | mean kills | resolve s | dup assignments/ep | Kalman vel RMSE |
-|---|---|---|---|---|---|---|---|---|---|
-| close_quarters | full | 6 | 0.67 | 0.33 | 3.7 | 2.3 | 0.9 | **0** | 3.20 |
-| close_quarters | greedy_assign | 6 | 0.67 | 0.33 | 3.7 | 2.3 | 0.9 | 588 | 3.20 |
-| close_quarters | legacy_all | 6 | 0.67 | 0.33 | 3.7 | 2.3 | 0.9 | 588 | 3.20 |
-| standard | full | 6 | 0.67 | 0.33 | 5.2 | 4.3 | 4.8 | **0** | **1.04** |
-| standard | greedy_assign | 6 | 0.67 | 0.33 | 5.2 | 4.3 | 4.8 | 3384 | 1.04 |
-| standard | legacy_all | 6 | 0.67 | 0.33 | 5.2 | 4.3 | 4.8 | 3384 | 1.04 |
+| scenario | variant | n | win | wipe | mean losses | mean kills | resolve s | dup assignments/ep | Kalman vel RMSE | DES |
+|---|---|---|---|---|---|---|---|---|---|---|
+| close_quarters | full | 6 | 0.67 | 0.33 | 3.7 | 2.3 | 0.9 | **0** | 3.20 | 54.1 |
+| close_quarters | greedy_assign | 6 | 0.67 | 0.33 | 3.7 | 2.3 | 0.9 | 588 | 3.20 | 54.1 |
+| close_quarters | legacy_all | 6 | 0.67 | 0.33 | 3.7 | 2.3 | 0.9 | 588 | 3.20 | 54.1 |
+| standard | full | 6 | 0.67 | 0.33 | 5.2 | 4.3 | 4.8 | **0** | **1.04** | 52.9 |
+| standard | greedy_assign | 6 | 0.67 | 0.33 | 5.2 | 4.3 | 4.8 | 3384 | 1.04 | 52.9 |
+| standard | legacy_all | 6 | 0.67 | 0.33 | 5.2 | 4.3 | 4.8 | 3384 | 1.04 | 52.9 |
+| far_field | full | 6 | 0.17 | 0.83 | 9.7 | 3.8 | 11.2 | **0** | **0.66** | 24.0 |
+| far_field | no_kalman | 6 | 0.17 | 0.83 | 9.7 | 3.8 | 11.2 | 0 | 0.66 | 24.0 |
+| far_field | pursuit | 6 | 0.17 | 0.83 | 9.7 | 3.8 | 11.2 | 0 | 0.66 | 24.0 |
+| far_field | greedy_assign | 6 | 0.17 | 0.83 | 9.7 | 3.8 | 11.2 | 8179 | 0.66 | 24.0 |
+| far_field | legacy_all | 6 | 0.17 | 0.83 | 9.7 | 3.8 | 11.2 | 8179 | 0.66 | 24.0 |
 
-DES = 100·(0.40·win + 0.20·survival + 0.15·speed + 0.15·integrity + 0.10·exchange)
+DES = 100*(0.40*win + 0.20*survival + 0.15*speed + 0.15*integrity + 0.10*exchange)
 — implemented in `eval_suite.aggregate()`; all inputs above are from raw CSV rows.
 
 ## Findings backed by evidence
 1. **Hungarian guarantees non-overlapping engagement**: 0 duplicated defender→enemy
-   assignments across every step of every episode; legacy greedy duplicates 588–3384×/ep.
-   This is the mathematical property, measured online via stable enemy UIDs.
-2. **Kalman tracker converges**: velocity RMSE 1.04 m/s against maneuvering truth in the
-   standard scenario (3.20 in the 0.9s-resolution close cell where the filter has ~0.9s
-   of data — convergence-limited, not model-limited).
+   assignments across every step of every episode and every scenario; legacy greedy
+   duplicates 588-8179x/ep (scales with fleet size x episode length). This is the
+   mathematical property, measured online via stable enemy UIDs.
+2. **Kalman tracker converges, and improves with track length**: velocity RMSE 1.04 m/s
+   in the standard cell, 0.66 m/s over the ~11 s far_field engagements; 3.20 in the
+   0.9 s-resolution close cell where the filter has almost no data (convergence-limited,
+   not model-limited).
 3. **Outcome parity across decision/guidance variants is itself evidence**: with both
    sides inside weapon envelopes from spawn, battle timing is governed by the kill
-   probability stream, not kinematics. Guidance/PN/prediction differences are therefore
-   expected to appear only in out-of-envelope approach phases (far_field class) or once
-   weapons are de-lethalized further — the harness supports both knobs.
-4. Control-jerk metric shows no separation (PID low-passes steering differences);
+   probability stream, not kinematics.
+4. **far_field (approach-phase class) is ALSO lethality-dominated as configured**: every
+   variant produces byte-identical per-seed outcomes (win 0.167, mean losses 9.67/10,
+   resolve ~11.2 s of a 16 s cap). From a 320 m spawn the engagement window closes
+   before decision quality can differentiate — the defense loses ~97% of its force even
+   when it wins. The scenario needs rebalancing before it can discriminate guidance
+   stacks: candidate knobs are defender MAX_SPEED / outward pre-positioning, enemy
+   speed, or further de-lethalizing `hit_rate` below 0.35/s.
+5. Control-jerk metric shows no separation (PID low-passes steering differences);
    retained in outputs for future higher-gain regimes.
 
 ## Reproduce
 ```
 uv run python gym_pybullet_drones/examples/eval_suite.py --episodes 6 --seed-base 42 \
     --cells "standard:full,standard:greedy_assign"
+uv run python gym_pybullet_drones/examples/eval_suite.py --episodes 6 \
+    --cells "far_field:full,far_field:no_kalman,far_field:pursuit,far_field:greedy_assign,far_field:legacy_all"
 ```

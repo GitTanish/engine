@@ -37,8 +37,24 @@ class JsonlLogger:
         with cls._lock:
             if cls._file is None:
                 cls.init()
-            cls._file.write(json.dumps(record, default=float) + "\n")
-            cls._file.flush()
+            line = json.dumps(record, default=float) + "\n"
+            try:
+                cls._file.write(line)
+                cls._file.flush()
+            except OSError:
+                # Windows can transiently invalidate the handle (AV scan,
+                # errno 22). Reopen once and continue — never crash the sim.
+                try:
+                    cls._file.close()
+                except Exception:
+                    pass
+                cls._file = None
+                cls.init(run_dir=os.path.dirname(cls._path or "") or None)
+                try:
+                    cls._file.write(line)
+                    cls._file.flush()
+                except OSError:
+                    pass  # drop the record rather than take down the run
             if cls._console:
                 print(f"[{record['event']}]", {k: v for k, v in record.items()
                                                 if k not in ("t", "event")})
