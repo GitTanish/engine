@@ -11,17 +11,74 @@ import threading
 
 LATEST_FRAME = None
 
+# Live-tuning bridge: the dashboard sends {"cmd":"set", ...} over the same WS;
+# commands are queued here and drained/applied inside the sim loop.
+FRIENDLIES = []          # live handles of DefenseAgents (set by run())
+PENDING_CMDS = []        # raw set-commands from UI clients
+CMD_LOCK = threading.Lock()
+
+
+def queue_agent_command(msg):
+    """Queue a tuning command from a WS client (called on the asyncio thread)."""
+    cmd = {}
+    if msg.get("assignment") in ("greedy", "hungarian"):
+        cmd["assignment"] = msg["assignment"]
+    if msg.get("guidance") in ("pn", "pursuit"):
+        cmd["guidance"] = msg["guidance"]
+    if msg.get("prediction") is not None:
+        cmd["prediction"] = bool(msg["prediction"])
+    if cmd:
+        with CMD_LOCK:
+            PENDING_CMDS.append(cmd)
+    return cmd
+
+
+def drain_pending_commands():
+    """Apply queued tuning commands to every defender agent (sim thread)."""
+    with CMD_LOCK:
+        pending, PENDING_CMDS[:] = list(PENDING_CMDS), []
+    merged = {}
+    for cmd in pending:
+        merged.update(cmd)
+    for ag in FRIENDLIES:
+        if "assignment" in merged:
+            ag.strategy.assignment_mode = merged["assignment"]
+        if "guidance" in merged:
+            ag.guidance = merged["guidance"]
+        if "prediction" in merged:
+            ag.use_prediction = bool(merged["prediction"])
+    return merged
+
+
 async def ws_server():
     async def handler(ws):
         last_sent_t = -1
-        while True:
-            if LATEST_FRAME is not None and LATEST_FRAME["t"] != last_sent_t:
-                try:
-                    await ws.send(json.dumps(LATEST_FRAME))
-                    last_sent_t = LATEST_FRAME["t"]
-                except websockets.exceptions.ConnectionClosed:
-                    break
-            await asyncio.sleep(0.01)
+
+        async def sender():
+            nonlocal last_sent_t
+            while True:
+                if LATEST_FRAME is not None and LATEST_FRAME["t"] != last_sent_t:
+                    try:
+                        await ws.send(json.dumps(LATEST_FRAME))
+                        last_sent_t = LATEST_FRAME["t"]
+                    except websockets.exceptions.ConnectionClosed:
+                        return
+                await asyncio.sleep(0.01)
+
+        async def receiver():
+            try:
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(msg, dict) and msg.get("cmd") == "set":
+                        queue_agent_command(msg)
+            except websockets.exceptions.ConnectionClosed:
+                return
+
+        await asyncio.gather(sender(), receiver())
+
     async with websockets.serve(handler, "localhost", 8765):
         await asyncio.Future()
 
@@ -134,6 +191,8 @@ def run():
 
     # --- AGENT SETUP ---
     friendlies = [DefenseAgent(i, NUM_DEFENDERS) for i in range(NUM_DEFENDERS)]
+    FRIENDLIES.clear()
+    FRIENDLIES.extend(friendlies)
 
     # --- SCOREBOARD ---
     wins = 0
@@ -172,7 +231,10 @@ def run():
         episode_over = False
         
         while not episode_over:
-            
+
+            # 0. Live-tuning commands from the dashboard (if any)
+            drain_pending_commands()
+
             # 1. State Parsing (Friendly)
             friendly_states = []
             for idx in range(NUM_DEFENDERS):
@@ -244,12 +306,28 @@ def run():
             for idx, e in enumerate(current_enemies):
                 drones.append({
                     "id": 100 + int(e['id']), "role": "attacker",
+                    "uid": int(e['uid']),
                     "pos": e['pos'].tolist() if isinstance(e['pos'], np.ndarray) else list(e['pos']),
                     "rpy": [0,0,0],
                     "vel": e.get('vel', [0,0,0]).tolist() if isinstance(e.get('vel'), np.ndarray) else [0,0,0],
                     "rpms": [5000, 5000, 5000, 5000]
                 })
-            LATEST_FRAME = {"t": i / env.CTRL_FREQ, "drones": drones}
+            LATEST_FRAME = {
+                "t": i / env.CTRL_FREQ,
+                "drones": drones,
+                # Real combat events this step: [{type: splash|ram, shooter, victim, victim_uid}]
+                "events": info.get("combat_events", []) or [],
+                # True strategy pairing: defender id -> enemy uid (null when unassigned)
+                "assignments": {str(ag.id): (int(ag.strategy.last_uid)
+                                             if ag.strategy.last_uid is not None else None)
+                                for ag in friendlies},
+            }
+            if friendlies:
+                LATEST_FRAME["tuning"] = {
+                    "assignment": friendlies[0].strategy.assignment_mode,
+                    "guidance": friendlies[0].guidance,
+                    "prediction": bool(friendlies[0].use_prediction),
+                }
             
             # --- WIN/LOSS LOGIC (resolved by the environment) ---
             # Check Loss: Enemy reached the asset

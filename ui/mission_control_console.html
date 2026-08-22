@@ -17,6 +17,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
+  <!-- Chart.js for EVAL A/B comparison bars -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
   <script>
     tailwind.config = {
       theme: {
@@ -179,7 +182,9 @@
       <!-- Intelligence Envelope / Protocol Preset Selector -->
       <section class="p-6 border-b border-graphite">
         <h2 class="font-metadata text-xs text-starlight mb-3">INTELLIGENCE ENVELOPE</h2>
-        <div class="grid grid-cols-2 gap-2 text-xs">
+
+        <!-- Cosmetic demo-mode protocol presets -->
+        <div id="preset-grid" class="grid grid-cols-2 gap-2 text-xs">
           <button id="preset-wolf" onclick="activatePreset('wolf')" class="border border-starlight bg-void font-metadata py-2 text-center text-starlight transition-colors">
             WOLF PACK
           </button>
@@ -192,6 +197,31 @@
           <button id="preset-market" onclick="activatePreset('market')" class="border border-graphite bg-void font-metadata py-2 text-center text-bone hover:border-starlight hover:text-starlight transition-colors">
             MARKET BID
           </button>
+        </div>
+
+        <!-- Real live-tuning toggles (LIVE WS mode only; drives backend agents) -->
+        <div id="live-tuning-panel" class="hidden space-y-3">
+          <div>
+            <span class="font-metadata text-[9px] text-bone block mb-1">ASSIGNMENT</span>
+            <div class="grid grid-cols-2 gap-2 text-[10px]">
+              <button id="tune-hungarian" onclick="setTuning('assignment','hungarian')" class="border border-starlight bg-void font-metadata py-1.5 text-center text-starlight transition-colors">HUNGARIAN</button>
+              <button id="tune-greedy" onclick="setTuning('assignment','greedy')" class="border border-graphite bg-void font-metadata py-1.5 text-center text-bone hover:border-starlight hover:text-starlight transition-colors">GREEDY</button>
+            </div>
+          </div>
+          <div>
+            <span class="font-metadata text-[9px] text-bone block mb-1">GUIDANCE</span>
+            <div class="grid grid-cols-2 gap-2 text-[10px]">
+              <button id="tune-pn" onclick="setTuning('guidance','pn')" class="border border-starlight bg-void font-metadata py-1.5 text-center text-starlight transition-colors">PN</button>
+              <button id="tune-pursuit" onclick="setTuning('guidance','pursuit')" class="border border-graphite bg-void font-metadata py-1.5 text-center text-bone hover:border-starlight hover:text-starlight transition-colors">PURSUIT</button>
+            </div>
+          </div>
+          <div>
+            <span class="font-metadata text-[9px] text-bone block mb-1">KALMAN PREDICTION</span>
+            <div class="grid grid-cols-2 gap-2 text-[10px]">
+              <button id="tune-pred-on" onclick="setTuning('prediction',true)" class="border border-starlight bg-void font-metadata py-1.5 text-center text-starlight transition-colors">ON</button>
+              <button id="tune-pred-off" onclick="setTuning('prediction',false)" class="border border-graphite bg-void font-metadata py-1.5 text-center text-bone hover:border-starlight hover:text-starlight transition-colors">OFF</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -278,19 +308,85 @@
 
       </div>
 
-      <!-- Bottom Strip: Consolidated Event Stream -->
-      <footer class="h-44 border-t border-graphite bg-void flex flex-col shrink-0 select-text">
-        <div class="h-8 border-b border-graphite px-6 flex items-center bg-void justify-between">
+      <!-- Bottom Strip: Consolidated Event Stream / EVAL / Log Explorer -->
+      <footer id="bottom-console" class="h-44 border-t border-graphite bg-void flex flex-col shrink-0 select-text transition-all duration-200">
+        <div class="h-8 border-b border-graphite px-6 flex items-center bg-void justify-between shrink-0">
           <div class="flex items-center gap-4">
-            <span class="font-metadata text-[10px] text-starlight">EVENT STREAM</span>
-            <button onclick="downloadLogs()" class="text-[9px] text-bone hover:text-starlight font-metadata transition-colors border border-graphite hover:border-starlight px-2 py-0.5">
-              EXPORT LOGS
-            </button>
+            <button id="ftab-stream" onclick="switchFooterTab('stream')" class="border border-starlight text-starlight text-[9px] font-metadata px-2 py-0.5 transition-colors">EVENT STREAM</button>
+            <button id="ftab-eval" onclick="switchFooterTab('eval')" class="border border-graphite text-bone hover:text-starlight text-[9px] font-metadata px-2 py-0.5 transition-colors">EVAL</button>
+            <button id="ftab-logs" onclick="switchFooterTab('logs')" class="border border-graphite text-bone hover:text-starlight text-[9px] font-metadata px-2 py-0.5 transition-colors">LOG EXPLORER</button>
+            <button onclick="toggleConsoleHeight()" class="text-[9px] font-metadata px-1 py-0.5 border border-graphite text-bone hover:text-starlight hover:border-starlight transition-colors" title="Expand / collapse panel">&#9650;</button>
+            <span id="stream-actions" class="flex items-center gap-4">
+              <button onclick="downloadLogs()" class="text-[9px] text-bone hover:text-starlight font-metadata transition-colors border border-graphite hover:border-starlight px-2 py-0.5">
+                EXPORT LOGS
+              </button>
+            </span>
           </div>
           <span class="font-metadata text-[9px] text-bone" id="protocol-indicator">PROTOCOL: DECENTRALIZED WOLF PACK</span>
         </div>
-        <div id="timeline-stream" class="flex-1 p-4 overflow-y-auto space-y-2 text-[11px] font-mono scroll-smooth">
+
+        <!-- Pane 1: live event stream -->
+        <div id="timeline-stream" class="flex-1 p-4 overflow-y-auto space-y-2 text-[11px] font-mono scroll-smooth min-h-0">
           <!-- Log stream lines appended directly by runtime events -->
+        </div>
+
+        <!-- Pane 2: EVAL A/B dashboard -->
+        <div id="eval-pane" class="hidden flex-1 min-h-0 flex overflow-hidden">
+          <div class="w-[46%] border-r border-graphite p-4 overflow-y-auto space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="font-metadata text-[10px] text-starlight">A/B SUMMARY (eval_output)</span>
+              <button onclick="loadEvalData(true)" class="text-[9px] font-metadata px-2 py-0.5 border border-graphite text-bone hover:text-starlight hover:border-starlight transition-colors">REFRESH</button>
+            </div>
+            <table class="w-full text-[10px] font-mono">
+              <thead>
+                <tr id="eval-table-head" class="text-left text-bone border-b border-graphite"></tr>
+              </thead>
+              <tbody id="eval-summary-table" class="text-ash"></tbody>
+            </table>
+            <div>
+              <span class="font-metadata text-[9px] text-bone block mb-1">WIN RATE BY VARIANT</span>
+              <div class="relative h-[120px]"><canvas id="chart-win"></canvas></div>
+            </div>
+            <div>
+              <span class="font-metadata text-[9px] text-bone block mb-1">DUPLICATE ASSIGNMENTS / EPISODE</span>
+              <div class="relative h-[120px]"><canvas id="chart-dup"></canvas></div>
+            </div>
+          </div>
+          <div class="flex-1 p-4 overflow-auto">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-metadata text-[10px] text-starlight">EVAL REPORT (EVAL_REPORT.md)</span>
+              <button onclick="loadEvalReport()" class="text-[9px] font-metadata px-2 py-0.5 border border-graphite text-bone hover:text-starlight hover:border-starlight transition-colors">RELOAD</button>
+            </div>
+            <pre id="eval-report" class="text-[10px] leading-relaxed whitespace-pre-wrap font-mono text-ash">Run eval_suite.py to generate a report.</pre>
+          </div>
+        </div>
+
+        <!-- Pane 3: structured log explorer -->
+        <div id="logs-pane" class="hidden flex-1 min-h-0 flex-col p-4 space-y-2 overflow-hidden">
+          <div class="flex items-center gap-2 shrink-0 flex-wrap">
+            <select id="log-run" onchange="loadLogTail()" class="bg-void border border-graphite text-[10px] font-mono text-starlight py-1 px-2 max-w-[220px]"></select>
+            <input id="log-limit" type="number" value="500" min="10" max="5000" class="w-20 bg-void border border-graphite text-[10px] font-mono text-starlight py-1 px-2" title="tail length">
+            <button onclick="loadLogTail()" class="text-[9px] font-metadata px-2 py-1 border border-graphite text-bone hover:text-starlight hover:border-starlight transition-colors">TAIL</button>
+            <label class="text-[9px] font-mono text-bone flex items-center gap-1 cursor-pointer"><input id="log-auto" type="checkbox" onchange="toggleLogAuto()" class="accent-blue-600"> AUTO 2s</label>
+            <div class="w-[1px] h-4 bg-graphite mx-1"></div>
+            <input id="log-filter-source" placeholder="filter source..." class="w-28 bg-void border border-graphite text-[10px] font-mono text-starlight py-1 px-2 placeholder:text-bone/60">
+            <input id="log-filter-event" placeholder="filter event..." class="w-28 bg-void border border-graphite text-[10px] font-mono text-starlight py-1 px-2 placeholder:text-bone/60">
+            <input id="log-filter-text" placeholder="free text..." class="w-36 bg-void border border-graphite text-[10px] font-mono text-starlight py-1 px-2 placeholder:text-bone/60">
+            <span id="log-count" class="text-[9px] font-mono text-bone ml-auto"></span>
+          </div>
+          <div class="flex-1 overflow-y-auto min-h-0 border border-graphite">
+            <table class="w-full text-[10px] font-mono">
+              <thead class="sticky top-0 bg-void">
+                <tr class="text-left text-bone border-b border-graphite">
+                  <th class="py-1 px-2 font-medium w-20">TIME</th>
+                  <th class="py-1 px-2 font-medium w-24">SOURCE</th>
+                  <th class="py-1 px-2 font-medium w-32">EVENT</th>
+                  <th class="py-1 px-2 font-medium">DATA</th>
+                </tr>
+              </thead>
+              <tbody id="logs-table" class="text-ash"></tbody>
+            </table>
+          </div>
         </div>
       </footer>
 
@@ -448,6 +544,19 @@
     let liveSimTime = 0;
     let latestLiveFrame = null;
 
+    // Live agent tuning mirror (synced from backend frames; mutated by toggles)
+    let agentTuning = { assignment: 'hungarian', guidance: 'pn', prediction: true };
+    let trueAssignments = {};   // defender liveId -> enemy uid (backend truth)
+
+    // Footer console tabs + dashboard state
+    let activeFooterTab = 'stream';
+    let consoleExpanded = false;
+    let evalLoadedOnce = false;
+    let evalCharts = [];
+    let logRunsLoaded = false;
+    let logAutoTimer = null;
+    let lastLogRows = [];
+
     // Window Startup
     window.onload = function() {
       // Setup live UTC Clock
@@ -463,6 +572,11 @@
       setupCommandInput();
       setupRaycastHover();
       setupFileImportZone();
+
+      // Live-filter the log explorer table as you type
+      ['log-filter-source', 'log-filter-event', 'log-filter-text'].forEach(id => {
+        document.getElementById(id).addEventListener('input', renderLogTable);
+      });
 
       // Bind dynamic 3D click listener to raycaster
       container.addEventListener('click', handleRadarClick);
@@ -525,6 +639,273 @@
       appendTimelineLog("SYSTEM", "Mission logs exported to local disk.");
     }
 
+    // ================= FOOTER CONSOLE TABS =================
+    const TAB_PANES = { stream: 'timeline-stream', eval: 'eval-pane', logs: 'logs-pane' };
+    // logs-pane uses flex-col when visible; others use block/flex defaults
+    const PANE_SHOW_CLASS = { stream: '', eval: 'flex', logs: 'flex' };
+
+    function switchFooterTab(name) {
+      activeFooterTab = name;
+      Object.entries(TAB_PANES).forEach(([tab, paneId]) => {
+        const pane = document.getElementById(paneId);
+        const btn = document.getElementById(`ftab-${tab}`);
+        if (tab === name) {
+          pane.classList.remove('hidden');
+          if (PANE_SHOW_CLASS[tab]) pane.classList.add(PANE_SHOW_CLASS[tab]);
+          btn.className = "border border-starlight text-starlight text-[9px] font-metadata px-2 py-0.5 transition-colors";
+        } else {
+          pane.classList.add('hidden');
+          if (PANE_SHOW_CLASS[tab]) pane.classList.remove(PANE_SHOW_CLASS[tab]);
+          btn.className = "border border-graphite text-bone hover:text-starlight text-[9px] font-metadata px-2 py-0.5 transition-colors";
+        }
+      });
+      document.getElementById('stream-actions').classList.toggle('hidden', name !== 'stream');
+
+      if (name === 'eval' && !evalLoadedOnce) loadEvalData();
+      if (name === 'eval') requestAnimationFrame(resizeEvalCharts);
+      if (name === 'logs' && !logRunsLoaded) loadLogRuns();
+    }
+
+    function toggleConsoleHeight() {
+      consoleExpanded = !consoleExpanded;
+      const footer = document.getElementById('bottom-console');
+      footer.classList.toggle('h-44', !consoleExpanded);
+      footer.classList.toggle('h-[62vh]', consoleExpanded);
+      requestAnimationFrame(resizeEvalCharts);
+    }
+
+    // ================= EVAL DASHBOARD =================
+    const SCENARIO_COLORS = ['#2563eb', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6'];
+
+    async function fetchJson(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json();
+    }
+
+    async function loadEvalData(manual) {
+      try {
+        const rows = await fetchJson('/eval/summary');
+        renderEvalSummary(rows);
+        renderEvalCharts(rows);
+        evalLoadedOnce = true;
+        if (manual) appendTimelineLog("EVAL", "A/B summary refreshed from /eval/summary.");
+      } catch (err) {
+        appendTimelineLog("ERROR", `Eval summary unavailable (${err.message}). Is serve_frontend.py running?`);
+      }
+      loadEvalReport();
+    }
+
+    function renderEvalSummary(rows) {
+      const head = document.getElementById('eval-table-head');
+      const body = document.getElementById('eval-summary-table');
+      if (!rows.length) {
+        head.innerHTML = '';
+        body.innerHTML = '<tr><td class="py-2 px-1 text-bone">No eval data — run eval_suite.py.</td></tr>';
+        return;
+      }
+      const cols = ['scenario', 'variant', 'win_rate', 'mean_losses', 'mean_kills', 'dup_assign_per_ep', 'DES'];
+      head.innerHTML = cols.map(c => `<th class="py-1 pr-3 font-medium">${c.replace(/_/g, ' ').toUpperCase()}</th>`).join('');
+      body.innerHTML = rows.map(r => '<tr class="border-b border-graphite/40">' + cols.map((c, i) => {
+        let v = r[c];
+        if (c === 'win_rate' && v !== undefined) v = `${Math.round(parseFloat(v) * 100)}%`;
+        else if (typeof v === 'number' || (!isNaN(parseFloat(v)) && isFinite(v))) v = parseFloat(v).toFixed(2);
+        return `<td class="py-1 pr-3 ${i <= 1 ? 'text-starlight' : ''}">${v}</td>`;
+      }).join('') + '</tr>').join('');
+    }
+
+    function destroyEvalCharts() {
+      evalCharts.forEach(c => c.destroy());
+      evalCharts = [];
+    }
+
+    function renderEvalCharts(rows) {
+      if (!rows.length || typeof Chart === 'undefined') return;
+
+      const scenarios = [...new Set(rows.map(r => r.scenario))];
+      const variants = [...new Set(rows.map(r => r.variant))];
+      const lookup = {};
+      rows.forEach(r => { lookup[`${r.scenario}|${r.variant}`] = r; });
+
+      destroyEvalCharts();
+
+      const mkChart = (canvasId, field, title, yLabel) => {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+        evalCharts.push(new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: variants,
+            datasets: scenarios.map((sc, i) => ({
+              label: sc,
+              data: variants.map(v => {
+                const row = lookup[`${sc}|${v}`];
+                return row ? parseFloat(row[field]) || 0 : 0;
+              }),
+              backgroundColor: SCENARIO_COLORS[i % SCENARIO_COLORS.length] + 'cc',
+              borderColor: SCENARIO_COLORS[i % SCENARIO_COLORS.length],
+              borderWidth: 1
+            }))
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: '#a1a1aa', font: { size: 9 } } },
+              tooltip: { titleFont: { size: 10 }, bodyFont: { size: 10 } }
+            },
+            scales: {
+              x: { ticks: { color: '#71717a', font: { size: 9 } }, grid: { color: '#1f2228' } },
+              y: { beginAtZero: true, title: { display: true, text: yLabel, color: '#71717a', font: { size: 9 } }, ticks: { color: '#71717a', font: { size: 9 } }, grid: { color: '#1f2228' } }
+            }
+          }
+        }));
+      };
+
+      mkChart('chart-win', 'win_rate', 'Win rate', 'WIN RATE');
+      mkChart('chart-dup', 'dup_assign_per_ep', 'Duplicate assignments', 'DUP / EPISODE');
+      resizeEvalCharts();
+    }
+
+    function resizeEvalCharts() {
+      if (activeFooterTab !== 'eval') return;
+      evalCharts.forEach(c => c.resize());
+    }
+
+    async function loadEvalReport() {
+      const pre = document.getElementById('eval-report');
+      try {
+        const res = await fetch('/eval/report');
+        if (!res.ok) throw new Error(`${res.status}`);
+        pre.textContent = await res.text();
+      } catch (err) {
+        pre.textContent = `No eval report yet — run eval_suite.py. (${err.message})`;
+      }
+    }
+
+    // ================= LOG EXPLORER =================
+    const SOURCE_COLORS = {
+      wolfpack: '#2563eb',
+      bt: '#f59e0b',
+      tracker: '#10b981',
+      env: '#ef4444',
+      combat: '#ef4444'
+    };
+
+    async function loadLogRuns() {
+      const sel = document.getElementById('log-run');
+      try {
+        const runs = await fetchJson('/logs');
+        logRunsLoaded = true;
+        if (!runs.length) {
+          sel.innerHTML = '<option>no runs found</option>';
+          return;
+        }
+        sel.innerHTML = runs.map(r =>
+          `<option value="${r.run}">${r.run} · ${r.lines} lines</option>`).join('');
+        loadLogTail();
+      } catch (err) {
+        sel.innerHTML = '<option>/logs unavailable</option>';
+        appendTimelineLog("ERROR", `Log list unavailable (${err.message}). Is serve_frontend.py running?`);
+      }
+    }
+
+    async function loadLogTail() {
+      const run = document.getElementById('log-run').value;
+      if (!run || run.includes(' ')) return;
+      const limit = Math.max(10, parseInt(document.getElementById('log-limit').value) || 500);
+      try {
+        lastLogRows = await fetchJson(`/logs/${run}?limit=${limit}`);
+        renderLogTable();
+      } catch (err) {
+        appendTimelineLog("ERROR", `Log tail failed for [${run}] (${err.message}).`);
+      }
+    }
+
+    function toggleLogAuto() {
+      const on = document.getElementById('log-auto').checked;
+      clearInterval(logAutoTimer);
+      if (on) logAutoTimer = setInterval(loadLogTail, 2000);
+    }
+
+    function renderLogTable() {
+      const srcF = document.getElementById('log-filter-source').value.trim().toLowerCase();
+      const evtF = document.getElementById('log-filter-event').value.trim().toLowerCase();
+      const txtF = document.getElementById('log-filter-text').value.trim().toLowerCase();
+      const body = document.getElementById('logs-table');
+
+      const rows = lastLogRows.filter(r => {
+        if (srcF && String(r.source || '').toLowerCase().indexOf(srcF) < 0) return false;
+        if (evtF && String(r.event || '').toLowerCase().indexOf(evtF) < 0) return false;
+        if (txtF && JSON.stringify(r).toLowerCase().indexOf(txtF) < 0) return false;
+        return true;
+      });
+
+      document.getElementById('log-count').innerText =
+        `${rows.length}/${lastLogRows.length} events`;
+
+      const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      body.innerHTML = rows.map(r => {
+        const time = new Date(r.t * 1000).toISOString().substr(11, 8);
+        const color = SOURCE_COLORS[String(r.source || '').toLowerCase()] || '#71717a';
+        const data = Object.assign({}, r);
+        delete data.t; delete data.source; delete data.event;
+        const dataStr = JSON.stringify(data);
+        return `<tr class="border-b border-graphite/30 hover:bg-[rgb(15,17,22)]">
+          <td class="py-0.5 px-2 text-bone">${time}</td>
+          <td class="py-0.5 px-2" style="color:${color}">${esc(String(r.source || '--').toUpperCase())}</td>
+          <td class="py-0.5 px-2 text-starlight">${esc(String(r.event || '--'))}</td>
+          <td class="py-0.5 px-2 text-bone truncate max-w-0" title="${esc(dataStr)}">${esc(dataStr)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ================= LIVE AGENT TUNING =================
+    function setTuning(key, value) {
+      agentTuning[key] = value;
+      updateTuningUI();
+      sendTuningState(key, value);
+    }
+
+    function sendTuningState(changedKey, changedVal) {
+      if (!wsSocket || wsSocket.readyState !== WebSocket.OPEN) {
+        appendTimelineLog("WS", "Tuning change queued but socket is not open — connect LIVE WS first.");
+        return;
+      }
+      const payload = Object.assign({ cmd: 'set' }, agentTuning);
+      try {
+        wsSocket.send(JSON.stringify(payload));
+        const pretty = changedKey === 'prediction' ? (changedVal ? 'ON' : 'OFF') : String(changedVal).toUpperCase();
+        appendTimelineLog("UPLINK", `Live-tune sent → ${changedKey.toUpperCase()} = ${pretty}.`);
+      } catch (err) {
+        appendTimelineLog("ERROR", `Tuning command failed to send (${err.message}).`);
+      }
+    }
+
+    function syncTuningFromBackend(tuning) {
+      if (!tuning) return;
+      ['assignment', 'guidance', 'prediction'].forEach(k => {
+        if (tuning[k] !== undefined && tuning[k] !== null) agentTuning[k] = tuning[k];
+      });
+      updateTuningUI();
+    }
+
+    function updateTuningUI() {
+      const seg = (id, active) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.className = active
+          ? "border border-starlight bg-void font-metadata py-1.5 text-center text-starlight transition-colors"
+          : "border border-graphite bg-void font-metadata py-1.5 text-center text-bone hover:border-starlight hover:text-starlight transition-colors";
+      };
+      seg('tune-hungarian', agentTuning.assignment === 'hungarian');
+      seg('tune-greedy', agentTuning.assignment === 'greedy');
+      seg('tune-pn', agentTuning.guidance === 'pn');
+      seg('tune-pursuit', agentTuning.guidance === 'pursuit');
+      seg('tune-pred-on', agentTuning.prediction === true);
+      seg('tune-pred-off', agentTuning.prediction === false);
+    }
+
     // Evolved preset configurations handling
     function activatePreset(type) {
       activeProtocol = type;
@@ -580,6 +961,10 @@
       });
 
       const wsPanel = document.getElementById('ws-status-panel');
+      // LIVE WS mode swaps cosmetic presets for real backend tuning toggles
+      document.getElementById('preset-grid').classList.toggle('hidden', source === 'live');
+      document.getElementById('live-tuning-panel').classList.toggle('hidden', source !== 'live');
+
       if (source === 'live') {
         wsPanel.classList.remove('hidden');
         clearAllEntities();
@@ -731,6 +1116,12 @@
 
       liveSimTime = data.t || 0;
 
+      // Sync tuning state from backend truth (no echo loop: UI-only update)
+      syncTuningFromBackend(data.tuning);
+
+      // Real strategy pairing: defender id -> enemy uid for this frame
+      if (data.assignments) trueAssignments = data.assignments;
+
       const currentDefenderIds = new Set();
       const currentAttackerIds = new Set();
 
@@ -771,6 +1162,17 @@
           threats.splice(i, 1);
           appendTimelineLog("INTERCEPT", `Target ID:${t.liveId} neutralized by defense perimeter.`);
         }
+      }
+
+      // Real backend combat events this step: splash/ram kills with true pairing
+      if (Array.isArray(data.events) && data.events.length > 0) {
+        data.events.forEach(ev => {
+          const kind = ev.type === 'ram' ? 'RAM-KILL' : 'SPLASH';
+          const victim = threats.find(t => t.uid === ev.victim_uid);
+          if (victim) triggerWhiteInterceptBloom(victim.position);
+          appendTimelineLog("COMBAT",
+            `${kind}: Defender ${ev.shooter} neutralized enemy UID ${ev.victim_uid}.`);
+        });
       }
 
       // Detect removed defenders
@@ -872,6 +1274,7 @@
         type: 'threat',
         liveId: d.id,
         id: d.id,
+        uid: d.uid !== undefined ? d.uid : null,
         mesh: mesh,
         position: pos,
         velocity: new THREE.Vector3(d.vel[0], 0, d.vel[1]),
@@ -919,7 +1322,9 @@
       }
     }
 
-    // Moderate coupling: compute and draw tracking beams between defenders and nearest attackers
+    // Moderate coupling: draw tracking beams between defenders and attackers.
+    // Prefers the backend's TRUE assignment pairing; falls back to nearest-attacker
+    // heuristic when no assignments are present in the frame (legacy backends).
     function updateLiveTrackingBeams() {
       const activeAttackers = threats.filter(t => t.active);
 
@@ -931,7 +1336,19 @@
           return;
         }
 
-        // Find nearest attacker within threat range
+        // 1. True pairing from backend strategy (assignments: defId -> uid)
+        const uid = trueAssignments[String(d.liveId !== undefined ? d.liveId : d.id)];
+        if (uid !== undefined && uid !== null) {
+          const assigned = activeAttackers.find(a => a.uid === uid);
+          if (assigned) {
+            d.assignedTarget = assigned;
+            d.state = "INTERCEPT";
+            updateTrackingBeam(d, assigned, 0x2563eb);
+            return;
+          }
+        }
+
+        // 2. Fallback: nearest attacker within threat range
         let nearest = null;
         let nearestDist = Infinity;
         activeAttackers.forEach(a => {
@@ -968,6 +1385,7 @@
       intercepts = [];
       activeTrails = [];
       previousFrameAttackerIds = new Set();
+      trueAssignments = {};
       threatsNeutralized = 0;
       threatsEscaped = 0;
     }
@@ -1677,15 +2095,21 @@
     }
 
     // Draws a thin, clean trajectory line to denote targeting lock
-    function updateTrackingBeam(defender, target) {
+    function updateTrackingBeam(defender, target, color = 0x1f2228) {
       if (!defender.beamLine) {
-        const beamMat = new THREE.LineBasicMaterial({ color: 0x1f2228 });
+        const beamMat = new THREE.LineBasicMaterial({ color: color });
         const geom = new THREE.BufferGeometry().setFromPoints([
           defender.position, target.position
         ]);
         defender.beamLine = new THREE.Line(geom, beamMat);
         scene.add(defender.beamLine);
       } else {
+        // Rebuild if the requested color changed (true pairing = signal blue)
+        if (defender.beamLine.material.color.getHex() !== color) {
+          removeTrackingBeam(defender);
+          updateTrackingBeam(defender, target, color);
+          return;
+        }
         const positions = defender.beamLine.geometry.attributes.position.array;
         positions[0] = defender.position.x;
         positions[1] = defender.position.y;
